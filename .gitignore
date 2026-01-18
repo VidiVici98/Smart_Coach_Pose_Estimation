@@ -1,0 +1,14 @@
+data/
+videos/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.DS_Store
+.vscode/
+.env/
+env/
+.idea/
+*.egg-info/
