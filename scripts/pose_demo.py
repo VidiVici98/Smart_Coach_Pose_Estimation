@@ -24,7 +24,7 @@ HAND_MODEL = "models/hand_landmarker.task"
 # ===============================
 # Display
 # ===============================
-WINDOW_NAME = "Pose + Hands"
+WINDOW_NAME = "mediapipe pose and hand landmarker"
 DISPLAY_SCALE =  1.0
 cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
