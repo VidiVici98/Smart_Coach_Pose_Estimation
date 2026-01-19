@@ -16,3 +16,7 @@ env/
 mediapipe_env/
 *.mp4
 *.webm
+Gunmen_Dataset/*
+Gunmen_Dataset/train/*
+Gunmen_Dataset/val/*
+*.cache
