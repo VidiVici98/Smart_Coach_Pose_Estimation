@@ -1,24 +1,80 @@
 input/*
 output/*
-logs/*
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
 *.pyd
-*.swp
-*.swo
-*.DS_Store
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+mediapipe_env/
+venv/
+.venv/
+ENV/
+
+# IDEs and editors
 .vscode/
 .idea/
-*.egg-info/
-mediapipe_env/*
-*.mp4
-*.webm
-Gunmen_Dataset/*
-Gunmen_Dataset/train/*
-Gunmen_Dataset/val/*
-*.cache
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
 *.log
 *.tmp
+*.cache
+
+# Runs / experiments
+runs/
+wandb/
+
+# Data: keep models versioned, ignore large inputs/outputs
+# We want to keep `data/models/` in git (per project decision)
+data/models/**
+!data/models/.gitkeep
+
+# Ignore large input and output directories
+data/input/*
+data/output/*
+
+# Legacy locations (if present)
+input/
+output/
+Gunmen_Dataset/
+
+# Media
+*.mp4
+*.avi
+*.mov
+*.webm
+
+# MediaPipe / task files (if you want to ignore some, keep models tracked above)
 *.task
-runs/*
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Keep gitkeep placeholders
+!data/models/.gitkeep
+!data/input/.gitkeep
+!data/output/.gitkeep
+
+# Migration scripts (optional - remove when migration complete)
+# scripts/migration/
