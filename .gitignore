@@ -46,11 +46,6 @@ data/models/**
 data/input/*
 data/output/*
 
-# Legacy locations (if present)
-input/
-output/
-Gunmen_Dataset/
-
 # Media
 *.mp4
 *.avi
@@ -74,5 +69,5 @@ htmlcov/
 !data/input/.gitkeep
 !data/output/.gitkeep
 
-# Migration scripts (optional - remove when migration complete)
-# scripts/migration/
+# Archived scripts (kept for reference only)
+scripts/archive/
