@@ -191,11 +191,11 @@ This format is intentionally:
 ```
 smart_coach/                    # Core library package
   ├─ constants/                 # Keypoint definitions
-  ├─ core/                      # Pipeline orchestration
-  ├─ models/                    # Model wrappers
-  ├─ metrics/                   # Metric calculations
-  ├─ visualization/             # Rendering overlays
-  └─ utils/                     # Helper utilities
+  ├─ core/                      # Pipeline orchestration (future)
+  ├─ models/                    # Model wrappers (future)
+  ├─ metrics/                   # Metric calculations (future)
+  ├─ visualization/             # Rendering overlays (future)
+  └─ utils/                     # Helper utilities (future)
 
 scripts/
   ├─ processing/                # Main executable scripts
@@ -203,7 +203,7 @@ scripts/
   │   ├─ pose_demo.py           # Simple pose demo
   │   └─ debug_gaze.py          # Gaze debugging
   ├─ tools/                     # Utility scripts
-  └─ migration/                 # Migration tools
+  └─ archive/                   # Archived scripts (for reference)
 
 data/
   ├─ input/                     # Input videos
@@ -219,11 +219,11 @@ config/                         # Configuration files
 
 tests/                          # Unit tests
 docs/                           # Documentation
+  └─ REPOSITORY_STRUCTURE.md    # Detailed structure guide
 third_party/                    # External dependencies
-  └─ detectron2/
 ```
 
-(Structure will evolve as components are separated further.)
+For a complete structure overview, see [docs/REPOSITORY_STRUCTURE.md](docs/REPOSITORY_STRUCTURE.md).
 
 ---
 
