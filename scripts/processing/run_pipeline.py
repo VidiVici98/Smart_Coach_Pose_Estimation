@@ -203,6 +203,9 @@ mp_face = mp.solutions.face_mesh.FaceMesh(
 # -------------------------
 # VIDEO SETUP
 # -------------------------
+# Ensure output directory exists
+os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+
 cap = cv2.VideoCapture(VIDEO_PATH)
 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))

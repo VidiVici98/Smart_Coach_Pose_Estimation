@@ -1,6 +1,7 @@
 import cv2
 import csv
 import math
+import os
 import mediapipe as mp
 
 # ===============================
@@ -107,8 +108,11 @@ hands = HandLandmarker.create_from_options(
 # ===============================
 # Video
 # ===============================
-cap = cv2.VideoCapture("videos/test_video.mp4")
+cap = cv2.VideoCapture("data/input/test_video.mp4")
 frame_num = 0
+
+# Ensure data directory exists
+os.makedirs("data", exist_ok=True)
 
 with open("data/pose_hand_landmarks.csv", "w", newline="") as f:
     writer = csv.writer(f)
