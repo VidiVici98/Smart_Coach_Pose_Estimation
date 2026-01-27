@@ -68,8 +68,8 @@ Type "DELETE" to confirm removal of old files.
 | `models/` | `data/models/` |
 | `input/` | `data/input/` |
 | `output/` | `data/output/` |
-| `Gunmen_Dataset/` | `data/datasets/gunmen/` |
-| `gun_dataset.yaml` | `config/gun_dataset.yaml` |
+| `Training_Dataset/` | `data/datasets/training/` |
+| `training_dataset.yaml` | `config/training_dataset.yaml` |
 | `detectron2/` | `third_party/detectron2/` |
 
 ## 🔧 Automatic Changes

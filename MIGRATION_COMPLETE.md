@@ -16,7 +16,7 @@ The file structure migration outlined in `NEW_STRUCTURE.md` has been successfull
 | `smart_coach/pose_landmarks.py` | `smart_coach/constants/pose_landmarks.py` |
 | `models/*` | `data/models/*` |
 | `output/*` | `data/output/*` |
-| `gun_dataset.yaml` | `config/gun_dataset.yaml` |
+| `training_dataset.yaml` | `config/training_dataset.yaml` |
 
 ### Path References Updated
 
@@ -24,7 +24,7 @@ All code and configuration files have been updated to use the new paths:
 - Model paths: `models/` → `data/models/`
 - Input paths: `input/` → `data/input/`
 - Output paths: `output/` → `data/output/`
-- Dataset paths: `Gunmen_Dataset/` → `data/datasets/gunmen/`
+- Dataset paths: `Training_Dataset/` → `data/datasets/training/`
 
 ### Documentation Updated
 

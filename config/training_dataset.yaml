@@ -1,5 +1,5 @@
-train: data/datasets/gunmen/train  # path to your training images
-val: data/datasets/gunmen/val      # path to your validation images
+train: data/datasets/training/train  # path to your training images
+val: data/datasets/training/val      # path to your validation images
 
 nc: 17                      # total number of classes
 names: [
@@ -7,5 +7,5 @@ names: [
     'meatballs', 'marinara sauce', 'tomato soup', 
     'chicken noodle soup', 'french onion soup', 
     'chicken breast', 'ribs', 'pulled pork', 
-    'hamburger', 'cavity', 'Human', 'Gun'
+    'hamburger', 'cavity', 'Human', 'Equipment'
 ]

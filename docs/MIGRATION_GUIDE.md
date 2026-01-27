@@ -54,9 +54,9 @@ This script:
 - `models/` → `data/models/`
 - `input/` → `data/input/`
 - `output/` → `data/output/`
-- `Gunmen_Dataset/` → `data/datasets/gunmen/`
+- `Training_Dataset/` → `data/datasets/training/`
 - `detectron2/` → `third_party/detectron2/`
-- `gun_dataset.yaml` → `config/gun_dataset.yaml`
+- `training_dataset.yaml` → `config/training_dataset.yaml`
 
 ---
 
@@ -126,7 +126,7 @@ This script:
 - `models/` directory (now `data/models/`)
 - `input/` directory (now `data/input/`)
 - `output/` directory (now `data/output/`)
-- `Gunmen_Dataset/` (now `data/datasets/gunmen/`)
+- `Training_Dataset/` (now `data/datasets/training/`)
 - `detectron2/` (now `third_party/detectron2/`)
 
 ---

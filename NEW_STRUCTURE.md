@@ -57,7 +57,7 @@ smart_coach_pose_estimation/
 │   ├── input/                      # Input videos
 │   ├── output/                     # Processed outputs
 │   ├── datasets/                   # Training datasets
-│   │   └── gunmen/                 # Gunmen dataset
+│   │   └── training/                 # Gunmen dataset
 │   │       ├── classes.txt
 │   │       ├── train/
 │   │       └── val/
@@ -68,7 +68,7 @@ smart_coach_pose_estimation/
 │
 ├── config/                         # Configuration files
 │   ├── default_config.yaml
-│   └── gun_dataset.yaml
+│   └── training_dataset.yaml
 │
 ├── tests/                          # Unit tests
 │   ├── __init__.py
@@ -102,8 +102,8 @@ smart_coach_pose_estimation/
 5. `models/*` → `data/models/*`
 6. `input/*` → `data/input/*`
 7. `output/*` → `data/output/*`
-8. `Gunmen_Dataset/*` → `data/datasets/gunmen/*`
-9. `gun_dataset.yaml` → `config/gun_dataset.yaml`
+8. `Training_Dataset/*` → `data/datasets/training/*`
+9. `training_dataset.yaml` → `config/training_dataset.yaml`
 10. `detectron2/*` → `third_party/detectron2/*`
 
 ### Directories to Create:
@@ -119,7 +119,7 @@ smart_coach_pose_estimation/
 - `data/`
 - `data/input/`
 - `data/output/`
-- `data/datasets/gunmen/`
+- `data/datasets/training/`
 - `data/models/`
 - `config/`
 - `tests/`

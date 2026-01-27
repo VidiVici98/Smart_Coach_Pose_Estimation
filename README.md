@@ -215,7 +215,7 @@ data/
   └─ datasets/                  # Training datasets
 
 config/                         # Configuration files
-  └─ gun_dataset.yaml
+  └─ training_dataset.yaml
 
 tests/                          # Unit tests
 docs/                           # Documentation
