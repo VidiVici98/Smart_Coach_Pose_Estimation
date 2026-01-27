@@ -104,10 +104,10 @@ input/                              ├── models/
 output/                             ├── input/
 Gunmen_Dataset/                     ├── output/
 detectron2/                         └── datasets/
-gun_dataset.yaml                        └── gunmen/
+training_dataset.yaml                        └── training/
 
                                     config/
-                                    └── gun_dataset.yaml
+                                    └── training_dataset.yaml
 
                                     third_party/
                                     └── detectron2/
