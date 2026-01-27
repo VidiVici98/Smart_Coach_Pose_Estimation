@@ -9,7 +9,7 @@ Smart Coach is a **computer vision analytics pipeline** for extracting pose, han
 
 ## Architecture Overview
 
-### Core Pipeline (`scripts/yolo_pose_with_mediapipe_hands.py`)
+### Core Pipeline (`scripts/processing/run_pipeline.py`)
 Single-file monolithic processor orchestrating:
 1. **YOLOv8 Pose** → Full-body skeleton (17 keypoints + velocities)
 2. **MediaPipe Hands (Tasks API)** → Dual-hand landmarks (21 pts each side)
@@ -26,8 +26,8 @@ Video → Frame decomposition → Multi-model inference
 ```
 
 ### Key Modules
-- [smart_coach/pose_landmarks.py](smart_coach/pose_landmarks.py) – Defines YOLOv8 pose skeleton (17 points) and MediaPipe pose enums
-- [scripts/yolo_pose_with_mediapipe_hands.py](scripts/yolo_pose_with_mediapipe_hands.py) – Main pipeline; imports from smart_coach
+- [smart_coach/constants/pose_landmarks.py](smart_coach/constants/pose_landmarks.py) – Defines YOLOv8 pose skeleton (17 points) and MediaPipe pose enums
+- [scripts/processing/run_pipeline.py](scripts/processing/run_pipeline.py) – Main pipeline; imports from smart_coach
 - Detectron2 embedded for Mask R-CNN body mask inference
 
 ---
@@ -71,9 +71,9 @@ row[f"{side}_trigger_pull"] = int(
 ### 5. Model Asset Paths
 All model files hardcoded in CONFIG section:
 ```python
-POSE_MODEL_PATH = "models/yolov8m-pose.pt"
-FACE_MODEL_PATH = "models/yolov8n-face.pt"
-HAND_MODEL_PATH = "models/hand_landmarker.task"  # MediaPipe .task format
+POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
+FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
+HAND_MODEL_PATH = "data/models/hand_landmarker.task"  # MediaPipe .task format
 ```
 Must exist relative to script execution directory.
 
@@ -125,14 +125,14 @@ Velocity (vx, vy) computed as delta from previous frame (normalized pixel space)
 ### Running the Pipeline
 ```bash
 cd /home/jon/Desktop/Smart_Coach_Pose_Estimation
-python scripts/yolo_pose_with_mediapipe_hands.py
-# Reads from input/test_video.mp4
-# Outputs: output/output_full.mp4 + output/analytics.csv
+python scripts/processing/run_pipeline.py
+# Reads from data/input/test_video.mp4
+# Outputs: data/output/output_full.mp4 + data/output/analytics.csv
 ```
 
 ### Expected Output Files
-- `output/output_full.mp4` – Input video with overlaid skeleton, hands, masks, gaze cone
-- `output/analytics.csv` – Frame-indexed metrics (human-readable, ML-friendly)
+- `data/output/output_full.mp4` – Input video with overlaid skeleton, hands, masks, gaze cone
+- `data/output/analytics.csv` – Frame-indexed metrics (human-readable, ML-friendly)
 
 ### Configuration Tuning
 Edit constants at top of main script:
