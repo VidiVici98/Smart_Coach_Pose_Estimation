@@ -186,28 +186,41 @@ This format is intentionally:
 
 ---
 
-## Repository Structure (Conceptual)
+## Repository Structure
 
 ```
-scripts/
-  ├─ video_processing.py
-  ├─ pose_pipeline.py
-  ├─ gun_detection.py
-  └─ analytics_export.py
+smart_coach/                    # Core library package
+  ├─ constants/                 # Keypoint definitions
+  ├─ core/                      # Pipeline orchestration
+  ├─ models/                    # Model wrappers
+  ├─ metrics/                   # Metric calculations
+  ├─ visualization/             # Rendering overlays
+  └─ utils/                     # Helper utilities
 
-models/
-  ├─ yolov8_pose.pt
-  ├─ yolov8_gun.pt
-  └─ mediapipe/
+scripts/
+  ├─ processing/                # Main executable scripts
+  │   ├─ run_pipeline.py        # Main entry point
+  │   ├─ pose_demo.py           # Simple pose demo
+  │   └─ debug_gaze.py          # Gaze debugging
+  ├─ tools/                     # Utility scripts
+  └─ migration/                 # Migration tools
 
 data/
-  ├─ raw_videos/
-  ├─ analytics_csv/
-  └─ datasets/
+  ├─ input/                     # Input videos
+  ├─ output/                    # Processed outputs
+  ├─ models/                    # Model weights
+  │   ├─ yolov8m-pose.pt
+  │   ├─ yolov8n-face.pt
+  │   └─ hand_landmarker.task
+  └─ datasets/                  # Training datasets
 
-docs/
-  ├─ metrics_reference.md
-  └─ model_notes.md
+config/                         # Configuration files
+  └─ gun_dataset.yaml
+
+tests/                          # Unit tests
+docs/                           # Documentation
+third_party/                    # External dependencies
+  └─ detectron2/
 ```
 
 (Structure will evolve as components are separated further.)
