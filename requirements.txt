@@ -1,0 +1,17 @@
+# Core Computer Vision and ML Dependencies
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+ultralytics>=8.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+
+# Data Processing
+pandas>=2.0.0
+
+# Detectron2 (see third_party/detectron2 for installation)
+# Install with: pip install 'git+https://github.com/facebookresearch/detectron2.git'
+
+# Utilities
+pyyaml>=6.0
+tqdm>=4.65.0
