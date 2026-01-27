@@ -32,5 +32,5 @@ These replace the old paths:
 - `input/` → `data/input/`
 - `output/` → `data/output/`
 - `models/` → `data/models/`
-- `Gunmen_Dataset/` → `data/datasets/gunmen/`
+- `Training_Dataset/` → `data/datasets/training/`
 - `detectron2/` → `third_party/detectron2/`

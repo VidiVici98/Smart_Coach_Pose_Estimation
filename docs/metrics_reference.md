@@ -156,7 +156,7 @@ The system estimates muzzle direction using:
 direction = wrist_position - elbow_position
 
 
-This acts as a proxy for barrel direction when no gun model exists.
+This acts as a proxy for barrel direction when no equipment model exists.
 
 Muzzle Cone Geometry
 
@@ -232,17 +232,17 @@ Object Detection Metrics (Future Expansion)
 
 When firearm detection is integrated:
 
-Gun Bounding Box
-gun_x1, gun_y1, gun_x2, gun_y2
+Equipment Bounding Box
+equipment_x1, equipment_y1, equipment_x2, equipment_y2
 
-Derived Gun Orientation
-gun_angle
+Derived Equipment Orientation
+equipment_angle
 
 Grip Alignment Error
-angle(gun_vector, wrist_vector)
+angle(equipment_vector, wrist_vector)
 
 Muzzle Offset
-distance(gun_tip, wrist)
+distance(equipment_tip, wrist)
 
 Metric Quality Levels
 
@@ -315,7 +315,7 @@ Recoil impulse estimation
 
 Sight alignment deviation
 
-Head-eye-gun alignment vector
+Head-eye-equipment alignment vector
 
 Stance width and center-of-mass
 

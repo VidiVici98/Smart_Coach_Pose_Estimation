@@ -1,7 +1,7 @@
 task: detect
 mode: train
 model: yolov8n.pt
-data: config/gun_dataset.yaml
+data: config/training_dataset.yaml
 epochs: 50
 time: null
 patience: 100
