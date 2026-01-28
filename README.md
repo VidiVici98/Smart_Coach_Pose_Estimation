@@ -1,5 +1,44 @@
 # Smart Coach – Pose Detection & Metrics Pipeline
 
+## 🚀 Quick Start
+
+**New to this repo or setting up a fresh environment?** Start here:
+
+```bash
+# 1. Clone and navigate
+git clone https://github.com/VidiVici98/Smart_Coach_Pose_Estimation.git
+cd Smart_Coach_Pose_Estimation
+
+# 2. Set up virtual environment
+python3 -m venv mediapipe_env
+source mediapipe_env/bin/activate  # On Windows: mediapipe_env\Scripts\activate
+
+# 3. Install dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 4. Download model files
+python scripts/tools/download_models.py
+
+# 5. Create test video (or use your own)
+python scripts/tools/create_test_video.py
+# OR copy your own: cp your_video.mp4 data/input/test_video.mp4
+
+# 6. Verify setup
+python scripts/tools/verify_setup.py
+
+# 7. Run the pipeline!
+python scripts/processing/run_pipeline.py
+```
+
+**Results will be in:**
+- `data/output/output_full.mp4` - Annotated video with pose overlays
+- `data/output/analytics.csv` - Frame-by-frame metrics (285 fields per frame)
+
+**📖 For detailed setup instructions, see [SETUP.md](SETUP.md)**
+
+---
+
 ## Overview
 
 This repository contains the **computer vision and analytics pipeline** responsible for extracting biomechanical, spatial, and safety-related metrics from training video. It is a **foundational, model-agnostic processing layer** designed to turn raw video into structured, time-series data suitable for downstream analysis, coaching feedback, and machine learning.
