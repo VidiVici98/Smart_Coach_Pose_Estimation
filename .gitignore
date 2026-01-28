@@ -68,6 +68,3 @@ htmlcov/
 !data/models/.gitkeep
 !data/input/.gitkeep
 !data/output/.gitkeep
-
-# Archived scripts (kept for reference only)
-scripts/archive/
