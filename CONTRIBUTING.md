@@ -33,6 +33,14 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 
 ### Installation
 
+**Quick Setup (Recommended):**
+```bash
+# One-command setup
+bash scripts/tools/setup.sh
+```
+
+**Manual Setup:**
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/VidiVici98/Smart_Coach_Pose_Estimation.git
@@ -54,6 +62,18 @@ This project adheres to a Code of Conduct that all contributors are expected to 
    ```bash
    pip install -r requirements-dev.txt
    ```
+
+5. Download model files:
+   ```bash
+   python scripts/tools/download_models.py
+   ```
+
+6. Verify setup:
+   ```bash
+   python scripts/tools/verify_setup.py
+   ```
+
+**For detailed setup instructions, see [SETUP.md](SETUP.md).**
 
 ## Making Changes
 

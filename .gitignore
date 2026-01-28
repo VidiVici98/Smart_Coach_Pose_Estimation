@@ -41,10 +41,15 @@ wandb/
 # We want to keep `data/models/` in git (per project decision)
 data/models/**
 !data/models/.gitkeep
+!data/models/README.md
 
 # Ignore large input and output directories
 data/input/*
+!data/input/.gitkeep
+!data/input/README.md
 data/output/*
+!data/output/.gitkeep
+!data/output/README.md
 
 # Media
 *.mp4
