@@ -17,8 +17,8 @@ def download_file(url, destination, description):
     print(f"  Destination: {destination}")
     
     try:
-        # Create a temporary file
-        temp_file = str(destination) + ".tmp"
+        # Create a temporary file (use Path object for consistency)
+        temp_file = destination.with_suffix(destination.suffix + ".tmp")
         
         def show_progress(block_num, block_size, total_size):
             """Show download progress."""
@@ -32,11 +32,11 @@ def download_file(url, destination, description):
                 mb_downloaded = downloaded / (1024 * 1024)
                 print(f"\r  Downloaded: {mb_downloaded:.1f} MB", end='')
         
-        urllib.request.urlretrieve(url, temp_file, show_progress)
+        urllib.request.urlretrieve(url, str(temp_file), show_progress)
         print()  # New line after progress
         
         # Move temp file to final destination
-        shutil.move(temp_file, destination)
+        shutil.move(str(temp_file), str(destination))
         
         # Verify file exists
         if destination.exists():
@@ -50,8 +50,8 @@ def download_file(url, destination, description):
     except Exception as e:
         print(f"\n  ✗ Error downloading: {e}\n")
         # Clean up temp file if it exists
-        if Path(temp_file).exists():
-            Path(temp_file).unlink()
+        if temp_file.exists():
+            temp_file.unlink()
         return False
 
 def download_yolo_models():
@@ -94,8 +94,10 @@ def download_yolo_models():
     
     # Download YOLOv8 Face model
     print("\n2. YOLOv8 Face Model (yolov8n-face)...")
-    print("  Note: Standard YOLOv8 models don't include face detection by default.")
-    print("  Using yolov8n.pt as placeholder. You may need a custom face model.")
+    print("  Note: Standard YOLOv8 doesn't include face detection by default.")
+    print("  Using yolov8n.pt as a generic object detector.")
+    print("  ⚠ WARNING: This is NOT a face-specific model. For production use,")
+    print("  consider training or obtaining a custom YOLOv8 face detection model.")
     try:
         model = YOLO('yolov8n.pt')
         cache_path = Path.home() / ".cache" / "ultralytics"
@@ -110,7 +112,6 @@ def download_yolo_models():
             shutil.copy(source_file, dest_file)
             size_mb = dest_file.stat().st_size / (1024 * 1024)
             print(f"  ✓ Copied to {dest_file} ({size_mb:.1f} MB)")
-            print(f"  ⚠ This is a generic yolov8n model, not specifically trained for faces")
         else:
             print(f"  ✗ Could not locate downloaded file")
             return False

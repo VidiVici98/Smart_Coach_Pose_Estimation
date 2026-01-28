@@ -58,7 +58,7 @@ def check_packages():
                 module = __import__(package)
                 version = getattr(module, '__version__', 'unknown')
                 print(f"  ✓ {package} ({version})")
-        except ImportError:
+        except (ImportError, ModuleNotFoundError) as e:
             print(f"  ✗ {package} - NOT INSTALLED")
             all_installed = False
     

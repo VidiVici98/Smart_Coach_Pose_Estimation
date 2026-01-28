@@ -37,8 +37,8 @@ Thumbs.db
 runs/
 wandb/
 
-# Data: keep models versioned, ignore large inputs/outputs
-# We want to keep `data/models/` in git (per project decision)
+# Data: keep data directory structure, ignore large files
+# Model weights are NOT tracked - only directory structure and README
 data/models/**
 !data/models/.gitkeep
 !data/models/README.md

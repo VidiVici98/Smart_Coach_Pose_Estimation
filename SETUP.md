@@ -67,16 +67,19 @@ mv ~/.cache/ultralytics/yolov8m-pose.pt data/models/
 
 #### 4.2. YOLOv8 Face Model
 ```bash
-python -c "from ultralytics import YOLO; YOLO('yolov8n-face.pt')"
-mv ~/.cache/ultralytics/yolov8n-face.pt data/models/
+# Note: Standard YOLOv8 doesn't have a face-specific model
+# We use the generic yolov8n model as a placeholder
+python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+cp ~/.cache/ultralytics/yolov8n.pt data/models/yolov8n-face.pt
 ```
 
-**Alternative for YOLOv8 models:**
+⚠️ **Important:** The "face model" is actually a generic YOLOv8 nano model, not trained specifically for faces. For production use, you may want to train or obtain a proper face detection model.
+
+**Alternative manual download:**
 ```bash
-# Direct download with wget/curl
 cd data/models
-wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m-pose.pt
-wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n-face.pt
+wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
+mv yolov8n.pt yolov8n-face.pt
 ```
 
 #### 4.3. MediaPipe Hand Landmarker
@@ -197,6 +200,10 @@ If you get memory errors:
 
 If working on a mobile device or constrained environment:
 
+**📱 See [MOBILE_WORKFLOW.md](MOBILE_WORKFLOW.md) for comprehensive mobile guidance**
+
+Quick tips:
+
 1. **Use lighter models:**
    - `yolov8n-pose.pt` instead of `yolov8m-pose.pt`
    - Edit `scripts/processing/run_pipeline.py` line 40
@@ -207,6 +214,11 @@ If working on a mobile device or constrained environment:
 3. **Skip optional dependencies:**
    - Only install what's in `requirements.txt`
    - Skip `requirements-dev.txt`
+
+4. **Consider cloud processing:**
+   - GitHub Codespaces (free tier)
+   - Google Colab (free with GPU)
+   - Faster and more practical for mobile users
 
 ## Quick Reference
 

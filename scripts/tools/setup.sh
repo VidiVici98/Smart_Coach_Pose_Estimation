@@ -59,7 +59,7 @@ echo ""
 # Step 4: Install dependencies
 echo "Step 4/6: Installing dependencies..."
 echo "  This may take several minutes..."
-pip install -r requirements.txt -q
+pip install -r requirements.txt
 if [ $? -eq 0 ]; then
     echo "  ✓ Dependencies installed"
 else

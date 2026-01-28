@@ -56,6 +56,8 @@ wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m-pose
 
 ### 2. YOLOv8 Face Model
 
+⚠️ **Important Note:** Standard Ultralytics YOLOv8 doesn't include a face-specific model. The pipeline uses a generic object detection model (yolov8n.pt) renamed as "yolov8n-face.pt". This is a workaround, not a production-ready face detector.
+
 **Using Python:**
 ```bash
 source mediapipe_env/bin/activate
@@ -63,7 +65,14 @@ python -c "from ultralytics import YOLO; model = YOLO('yolov8n.pt')"
 cp ~/.cache/ultralytics/yolov8n.pt data/models/yolov8n-face.pt
 ```
 
-**Note:** Standard YOLOv8 doesn't include a specific face model. The pipeline uses a general object detection model. For better face detection, you may need to train or find a custom face-specific YOLOv8 model.
+**Or using wget:**
+```bash
+cd data/models
+wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
+mv yolov8n.pt yolov8n-face.pt
+```
+
+**For Production:** Consider training a custom YOLOv8 model specifically for face detection, or use an alternative face detection framework.
 
 ### 3. MediaPipe Hand Landmarker
 
