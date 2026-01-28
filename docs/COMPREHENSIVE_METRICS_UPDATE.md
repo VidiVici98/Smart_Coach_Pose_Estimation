@@ -101,14 +101,13 @@ The pipeline has been enhanced to collect **comprehensive biomechanical and spat
 
 ## Total Metrics Collected
 
-The updated pipeline now collects **271 metrics per frame**:
+The updated pipeline now collects **285 metrics per frame**:
 
 | Category | Count | Description |
 |----------|-------|-------------|
 | Basic Metrics | 5 | frame, timestamp, shoulder_width, hip_width, stance_width |
 | Pose Keypoints | 85 | 17 points × (x, y, vx, vy, conf) |
-| Hand Landmarks | 170 | 2 hands × 21 points × 4 metrics (x, y, vx, vy) |
-| Trigger Events | 2 | L_trigger_pull, R_trigger_pull |
+| Hand Landmarks | 170 | 2 hands × 21 points × 4 metrics (x, y, vx, vy) + 2 trigger flags |
 | Gaze Metrics | 3 | gaze_dir_x, gaze_dir_y, gaze_on_body |
 | Joint Angles | 8 | Elbow, shoulder, hip, knee (L/R) |
 | Arm Extension | 2 | L_arm_extension, R_arm_extension |
@@ -116,7 +115,7 @@ The updated pipeline now collects **271 metrics per frame**:
 | Grip Metrics | 2 | hand_distance, grip_symmetry |
 | Body Position | 3 | center_of_mass_x/y, body_lean_angle |
 | Head Orientation | 3 | head_pitch, head_yaw, head_roll |
-| **TOTAL** | **287** | **All metrics** |
+| **TOTAL** | **285** | **All metrics** |
 
 ## Data Quality Tiers
 
