@@ -1,0 +1,16 @@
+# Core dependencies for Smart Coach Pose Estimation
+# Computer Vision & Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+mediapipe>=0.10.0
+
+# YOLO for pose and object detection
+ultralytics>=8.0.0
+
+# Data processing
+pandas>=2.0.0
+
+# Scientific computing
+scipy>=1.10.0
