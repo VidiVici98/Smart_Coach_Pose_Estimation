@@ -256,13 +256,29 @@ These are intentional trade-offs at this stage.
 
 ---
 
-## Future Directions
+## Roadmap & Future Development
 
-* Improved firearm orientation estimation
-* Multi-person disambiguation
-* Camera calibration support
-* Depth approximation
-* Automatic segment detection (draw, presentation, trigger press, etc.)
+For comprehensive development plans, priorities, and timelines, see **[ROADMAP.md](ROADMAP.md)**.
+
+### Immediate Priorities (0-3 months)
+* ⚡ **Pipeline performance optimization** — 4-20x speedup via GPU + caching
+* 🎯 **Firearm detection & orientation** — Explicit firearm detection for accurate muzzle direction
+* 🎓 **Coaching insights engine** — Rule-based coaching feedback from metrics
+* 📊 **Automatic event segmentation** — Detect draws, presentations, reloads
+
+### Medium-Term Goals (3-6 months)
+* 🤖 **Machine learning integration** — Stance classification, form quality scoring
+* 📱 **Web dashboard** — Interactive visualization and reporting
+* 🧬 **Advanced biomechanics** — Recoil analysis, sight alignment, balance metrics
+* 🚀 **Real-time processing** — Low-latency pipeline for live coaching
+
+### Long-Term Vision (6-12+ months)
+* 📱 Mobile application for range use
+* 🏆 Competition and certification support
+* 🔗 Integration with training platforms and equipment
+* 🎯 Adaptive training recommendations
+
+See [ROADMAP.md](ROADMAP.md) for detailed plans, AI coaching opportunities, and contribution ideas.
 
 ---
 
