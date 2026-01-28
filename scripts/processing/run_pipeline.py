@@ -87,6 +87,50 @@ def norm(v): return np.linalg.norm(v)+1e-6
 def unit(v): return v/norm(v)
 def lerp(a,b,t): return a*(1-t)+b*t
 
+def calculate_angle(p1, p2, p3):
+    """Calculate angle at p2 formed by p1-p2-p3 in degrees."""
+    if p1 is None or p2 is None or p3 is None:
+        return None
+    v1 = p1 - p2
+    v2 = p3 - p2
+    cos_angle = np.dot(v1, v2) / (norm(v1) * norm(v2))
+    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    angle_rad = np.arccos(cos_angle)
+    return np.degrees(angle_rad)
+
+def calculate_center_of_mass(pts):
+    """Calculate approximate center of mass from available keypoints."""
+    # Use core body points: shoulders, hips, knees if available
+    core_points = []
+    # Shoulders
+    if 5 in pts: core_points.append(pts[5])
+    if 6 in pts: core_points.append(pts[6])
+    # Hips
+    if 11 in pts: core_points.append(pts[11])
+    if 12 in pts: core_points.append(pts[12])
+    # Knees
+    if 13 in pts: core_points.append(pts[13])
+    if 14 in pts: core_points.append(pts[14])
+    
+    if len(core_points) > 0:
+        return np.mean(core_points, axis=0)
+    return None
+
+def calculate_body_lean(pts):
+    """Calculate body lean angle from vertical in degrees."""
+    # Use shoulder-to-hip vector for lean estimation
+    if 5 in pts and 6 in pts and 11 in pts and 12 in pts:
+        shoulder_mid = (pts[5] + pts[6]) / 2
+        hip_mid = (pts[11] + pts[12]) / 2
+        body_vec = shoulder_mid - hip_mid
+        # Angle from vertical (0 degrees = straight up)
+        vertical = np.array([0, -1])  # negative y is up in image coords
+        cos_angle = np.dot(body_vec, vertical) / (norm(body_vec) * norm(vertical))
+        cos_angle = np.clip(cos_angle, -1.0, 1.0)
+        angle_rad = np.arccos(cos_angle)
+        return np.degrees(angle_rad)
+    return None
+
 def draw_mask_overlay(frame, mask):
     overlay = frame.copy()
     overlay[mask>0] = (50,150,255)
@@ -216,15 +260,40 @@ writer = cv2.VideoWriter(OUTPUT_PATH, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w,h
 # -------------------------
 # CSV SETUP
 # -------------------------
-csv_fields = ["frame","shoulder_width"]
+csv_fields = ["frame","timestamp","shoulder_width","hip_width","stance_width"]
+
+# Pose keypoints with confidence scores
 for i in range(17):
-    csv_fields += [f"kps_{i}_x",f"kps_{i}_y",f"kps_{i}_vx",f"kps_{i}_vy"]
+    csv_fields += [f"kps_{i}_x",f"kps_{i}_y",f"kps_{i}_vx",f"kps_{i}_vy",f"kps_{i}_conf"]
+
+# Hand landmarks
 for side in ["L","R"]:
     for i in range(21):
         csv_fields += [f"{side}_hand_{i}_x",f"{side}_hand_{i}_y",
                        f"{side}_hand_{i}_vx",f"{side}_hand_{i}_vy"]
     csv_fields += [f"{side}_trigger_pull"]
+
+# Gaze metrics
 csv_fields += ["gaze_dir_x","gaze_dir_y","gaze_on_body"]
+
+# Joint angles (in degrees)
+csv_fields += ["L_elbow_angle","R_elbow_angle","L_shoulder_angle","R_shoulder_angle",
+               "L_hip_angle","R_hip_angle","L_knee_angle","R_knee_angle"]
+
+# Arm extension metrics (normalized by shoulder_width)
+csv_fields += ["L_arm_extension","R_arm_extension"]
+
+# Grip metrics
+csv_fields += ["hand_distance","grip_symmetry"]
+
+# Body position metrics
+csv_fields += ["center_of_mass_x","center_of_mass_y","body_lean_angle"]
+
+# Head orientation (degrees)
+csv_fields += ["head_pitch","head_yaw","head_roll"]
+
+# Wrist metrics
+csv_fields += ["L_wrist_elevation","R_wrist_elevation","L_elbow_elevation","R_elbow_elevation"]
 
 csvfile = open(CSV_PATH,"w",newline="")
 csvwriter = csv.DictWriter(csvfile,fieldnames=csv_fields)
@@ -234,6 +303,7 @@ csvwriter.writeheader()
 # STATE
 # -------------------------
 prev_pose = {}
+prev_pose_conf = {}  # Track confidence scores
 prev_hand = {}
 prev_index_y = {"L":None,"R":None}
 prev_forward_3d = None
@@ -243,6 +313,7 @@ prev_gaze_vec_2d = None  # For 2D outlier rejection
 prev_arm_spread = {"L": None, "R": None}  # Track wrist-to-shoulder distance per side
 frame_idx = 0
 start_time = time.time()
+video_start_time = 0.0  # Will be set from video
 
 # -------------------------
 # FACE MODEL 3D POINTS
@@ -265,17 +336,20 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         if not ret:
             break
 
-        row = {"frame":frame_idx}
+        row = {"frame":frame_idx, "timestamp": frame_idx / fps}
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # -------- POSE --------
         pts = {}
+        pts_conf = {}  # Store confidence scores
         result = pose_model(frame, conf=CONF_THRES, max_det=1)[0]
         if result.keypoints is not None:
             kps = result.keypoints.data[0].cpu().numpy()
             for i,(x,y,c) in enumerate(kps):
+                pts_conf[i] = c  # Store confidence
                 if c < CONF_THRES and i in prev_pose:
                     pts[i] = prev_pose[i]
+                    pts_conf[i] = prev_pose_conf.get(i, 0.0)  # Use previous confidence
                     continue
                 p = np.array([x,y])
                 if i in prev_pose:
@@ -284,10 +358,40 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     p = np.array([x, y])  # Fallback for missing detection
                 pts[i] = p
                 prev_pose[i] = p
+                prev_pose_conf[i] = c
             draw_skeleton(frame, pts, SKELETON_EDGES)
 
         shoulder_width = norm(pts[5]-pts[6]) if 5 in pts and 6 in pts else 1.0
         row["shoulder_width"] = shoulder_width
+        
+        # Calculate hip width
+        hip_width = norm(pts[11]-pts[12]) if 11 in pts and 12 in pts else None
+        row["hip_width"] = hip_width if hip_width else 0.0
+        
+        # Calculate stance width (foot-to-foot distance)
+        stance_width = norm(pts[15]-pts[16]) if 15 in pts and 16 in pts else None
+        row["stance_width"] = stance_width if stance_width else 0.0
+        
+        # Populate keypoint data in row (x, y, vx, vy, conf for each of 17 keypoints)
+        for i in range(17):
+            if i in pts:
+                row[f"kps_{i}_x"] = pts[i][0]
+                row[f"kps_{i}_y"] = pts[i][1]
+                # Calculate velocity from previous frame
+                if i in prev_pose:
+                    row[f"kps_{i}_vx"] = pts[i][0] - prev_pose[i][0]
+                    row[f"kps_{i}_vy"] = pts[i][1] - prev_pose[i][1]
+                else:
+                    row[f"kps_{i}_vx"] = 0.0
+                    row[f"kps_{i}_vy"] = 0.0
+                row[f"kps_{i}_conf"] = pts_conf.get(i, 0.0)
+            else:
+                # Keypoint not detected
+                row[f"kps_{i}_x"] = 0.0
+                row[f"kps_{i}_y"] = 0.0
+                row[f"kps_{i}_vx"] = 0.0
+                row[f"kps_{i}_vy"] = 0.0
+                row[f"kps_{i}_conf"] = 0.0
 
         # -------- ARM SPREAD MONITORING (for arm-aware torso correction) --------
         # Track if arms are compressing inward, which would corrupt shoulder-based torso
@@ -313,6 +417,15 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                 break
 
         # -------- HANDS --------
+        # Initialize all hand landmarks to 0
+        for side in ["L","R"]:
+            for i in range(21):
+                row[f"{side}_hand_{i}_x"] = 0.0
+                row[f"{side}_hand_{i}_y"] = 0.0
+                row[f"{side}_hand_{i}_vx"] = 0.0
+                row[f"{side}_hand_{i}_vy"] = 0.0
+            row[f"{side}_trigger_pull"] = 0
+        
         hand_res = hands_detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
         if hand_res.hand_landmarks:
             for side,hand in zip(["L","R"], hand_res.hand_landmarks):
@@ -324,9 +437,20 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     p = np.array([px, py], dtype=np.float32)
 
                     if (side, i) in prev_hand:
-                        p = lerp(prev_hand[(side, i)], p, TEMP_ALPHA)
+                        p_prev = prev_hand[(side, i)]
+                        p = lerp(p_prev, p, TEMP_ALPHA)
+                        # Calculate velocity
+                        row[f"{side}_hand_{i}_vx"] = p[0] - p_prev[0]
+                        row[f"{side}_hand_{i}_vy"] = p[1] - p_prev[1]
                     else:
                         p = np.array([px, py], dtype=np.float32)  # Fallback for missing detection
+                        row[f"{side}_hand_{i}_vx"] = 0.0
+                        row[f"{side}_hand_{i}_vy"] = 0.0
+                    
+                    # Store position in row
+                    row[f"{side}_hand_{i}_x"] = p[0]
+                    row[f"{side}_hand_{i}_y"] = p[1]
+                    
                     prev_hand[(side, i)] = p
                     ip=(int(p[0]),int(p[1]))
                     pts_hand.append(ip)
@@ -506,6 +630,103 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                 if 0 <= p[0] < w and 0 <= p[1] < h and body_mask[p[1], p[0]]:
                                     row["gaze_on_body"] = 1
                                     break
+        
+        # -------- CALCULATE ADDITIONAL METRICS --------
+        # Joint angles
+        row["L_elbow_angle"] = calculate_angle(pts.get(5), pts.get(7), pts.get(9)) or 0.0  # L shoulder-elbow-wrist
+        row["R_elbow_angle"] = calculate_angle(pts.get(6), pts.get(8), pts.get(10)) or 0.0  # R shoulder-elbow-wrist
+        row["L_shoulder_angle"] = calculate_angle(pts.get(11), pts.get(5), pts.get(7)) or 0.0  # L hip-shoulder-elbow
+        row["R_shoulder_angle"] = calculate_angle(pts.get(12), pts.get(6), pts.get(8)) or 0.0  # R hip-shoulder-elbow
+        row["L_hip_angle"] = calculate_angle(pts.get(5), pts.get(11), pts.get(13)) or 0.0  # L shoulder-hip-knee
+        row["R_hip_angle"] = calculate_angle(pts.get(6), pts.get(12), pts.get(14)) or 0.0  # R shoulder-hip-knee
+        row["L_knee_angle"] = calculate_angle(pts.get(11), pts.get(13), pts.get(15)) or 0.0  # L hip-knee-ankle
+        row["R_knee_angle"] = calculate_angle(pts.get(12), pts.get(14), pts.get(16)) or 0.0  # R hip-knee-ankle
+        
+        # Arm extension (wrist to shoulder distance, normalized by shoulder_width)
+        if 5 in pts and 9 in pts:
+            row["L_arm_extension"] = norm(pts[9] - pts[5]) / shoulder_width
+        else:
+            row["L_arm_extension"] = 0.0
+        
+        if 6 in pts and 10 in pts:
+            row["R_arm_extension"] = norm(pts[10] - pts[6]) / shoulder_width
+        else:
+            row["R_arm_extension"] = 0.0
+        
+        # Hand distance and grip symmetry
+        # Check if both hands detected in hand landmarks
+        hand_detected = {"L": False, "R": False}
+        hand_centers = {}
+        if hand_res.hand_landmarks and len(hand_res.hand_landmarks) >= 1:
+            for idx, (side, hand) in enumerate(zip(["L", "R"], hand_res.hand_landmarks)):
+                if idx < len(hand_res.hand_landmarks):
+                    hand_detected[side] = True
+                    # Use wrist (landmark 0) as hand center
+                    if (side, 0) in prev_hand:
+                        hand_centers[side] = prev_hand[(side, 0)]
+        
+        if hand_detected["L"] and hand_detected["R"]:
+            row["hand_distance"] = norm(hand_centers["L"] - hand_centers["R"]) / shoulder_width
+            row["grip_symmetry"] = 1.0  # Both hands detected
+        else:
+            row["hand_distance"] = 0.0
+            row["grip_symmetry"] = 0.0  # One or both hands missing
+        
+        # Center of mass
+        com = calculate_center_of_mass(pts)
+        if com is not None:
+            row["center_of_mass_x"] = com[0] / shoulder_width
+            row["center_of_mass_y"] = com[1] / shoulder_width
+        else:
+            row["center_of_mass_x"] = 0.0
+            row["center_of_mass_y"] = 0.0
+        
+        # Body lean angle
+        row["body_lean_angle"] = calculate_body_lean(pts) or 0.0
+        
+        # Head orientation (from rotation matrix if available)
+        # These will be populated if we have face detection
+        row["head_pitch"] = 0.0
+        row["head_yaw"] = 0.0
+        row["head_roll"] = 0.0
+        
+        # Extract Euler angles from rotation matrix if we calculated it
+        if 'rot_mat' in locals() and rot_mat is not None:
+            # Convert rotation matrix to Euler angles (in degrees)
+            # Using standard aerospace convention: yaw-pitch-roll
+            sy = np.sqrt(rot_mat[0, 0] * rot_mat[0, 0] + rot_mat[1, 0] * rot_mat[1, 0])
+            singular = sy < 1e-6
+            if not singular:
+                row["head_pitch"] = np.degrees(np.arctan2(-rot_mat[2, 0], sy))
+                row["head_yaw"] = np.degrees(np.arctan2(rot_mat[1, 0], rot_mat[0, 0]))
+                row["head_roll"] = np.degrees(np.arctan2(rot_mat[2, 1], rot_mat[2, 2]))
+            else:
+                row["head_pitch"] = np.degrees(np.arctan2(-rot_mat[2, 0], sy))
+                row["head_yaw"] = np.degrees(np.arctan2(-rot_mat[1, 2], rot_mat[1, 1]))
+                row["head_roll"] = 0.0
+        
+        # Wrist and elbow elevation (y-coordinate, normalized)
+        # Lower y value = higher in frame (image coordinates)
+        if 9 in pts:  # L wrist
+            row["L_wrist_elevation"] = -pts[9][1] / shoulder_width  # Negative for intuitive "higher = positive"
+        else:
+            row["L_wrist_elevation"] = 0.0
+        
+        if 10 in pts:  # R wrist
+            row["R_wrist_elevation"] = -pts[10][1] / shoulder_width
+        else:
+            row["R_wrist_elevation"] = 0.0
+        
+        if 7 in pts:  # L elbow
+            row["L_elbow_elevation"] = -pts[7][1] / shoulder_width
+        else:
+            row["L_elbow_elevation"] = 0.0
+        
+        if 8 in pts:  # R elbow
+            row["R_elbow_elevation"] = -pts[8][1] / shoulder_width
+        else:
+            row["R_elbow_elevation"] = 0.0
+        
         # -------- WRITE --------
         csvwriter.writerow(row)
         writer.write(frame)
