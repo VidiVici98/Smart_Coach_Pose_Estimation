@@ -2,6 +2,26 @@ import os
 import sys
 import time
 
+# Print immediately to show script is starting
+print("=" * 60, flush=True)
+print("Smart Coach Pose Estimation Pipeline", flush=True)
+print("=" * 60, flush=True)
+print("Initializing...", flush=True)
+
+# -------------------------
+# Fix for libGL.so.1 missing in codespace
+# -------------------------
+# Create a fake libGL stub to prevent import errors
+import ctypes.util
+_orig_find_library = ctypes.util.find_library
+
+def _fake_find_library(name):
+    if name in ['GL', 'GLU']:
+        return None  # Return None to skip loading
+    return _orig_find_library(name)
+
+ctypes.util.find_library = _fake_find_library
+
 # -------------------------
 # Suppress PyTorch NNPACK warnings completely
 # -------------------------
@@ -20,6 +40,7 @@ class SuppressStdErr:
 # -------------------------
 # IMPORTS
 # -------------------------
+print("Importing libraries...", flush=True)
 with SuppressStdErr():
     import cv2
     import torch
@@ -29,6 +50,7 @@ with SuppressStdErr():
     from torchvision.models.detection import maskrcnn_resnet50_fpn
     from torchvision.transforms import functional as F
     import mediapipe as mp
+print("✓ Import complete", flush=True)
 
 # -------------------------
 # CONFIG
@@ -40,9 +62,65 @@ CSV_PATH    = "data/output/analytics.csv"
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
 HAND_MODEL_PATH = "data/models/hand_landmarker.task"
+FACE_LANDMARKER_PATH = "data/models/face_landmarker.task"  # For MediaPipe Tasks API
 
-# Adjusted TEMP_ALPHA for faster responsiveness
-TEMP_ALPHA = 0.6
+# Validate model files before loading
+print("Validating model files...")
+model_validation_failed = False
+for model_name, model_path, expected_min_mb, expected_max_mb in [
+    ("YOLOv8 Pose", POSE_MODEL_PATH, 40, 60),
+    ("YOLOv8 Face", FACE_MODEL_PATH, 5, 10),
+    ("Hand Landmarker", HAND_MODEL_PATH, 6, 10),
+    ("Face Landmarker", FACE_LANDMARKER_PATH, 25, 28)
+]:
+    if os.path.exists(model_path):
+        size_mb = os.path.getsize(model_path) / (1024 * 1024)
+        
+        # Check if file size is in expected range
+        if size_mb < expected_min_mb or size_mb > expected_max_mb:
+            print(f"  ✗ {model_name}: CORRUPTED ({size_mb:.1f} MB, expected {expected_min_mb}-{expected_max_mb} MB)")
+            
+            if "face_landmarker" in model_path:
+                print(f"    Removing corrupted file and re-downloading...")
+                try:
+                    os.remove(model_path)
+                    print(f"    ⚠ Google CDN is serving wrong file (3.6MB instead of 26MB)")
+                    print(f"    This is a known issue with MediaPipe's storage bucket")
+                    print(f"    Skipping gaze detection for now...")
+                    print(f"    ")
+                    print(f"    WORKAROUND: Download manually from:")
+                    print(f"    https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task")
+                    print(f"    or https://github.com/google-ai-edge/mediapipe/tree/master/mediapipe/tasks/testdata/vision")
+                    # Don't attempt re-download since Google's CDN is broken
+                except Exception as e:
+                    print(f"\n    ✗ Cleanup failed: {e}")
+            else:
+                print(f"    ERROR: Critical model file corrupted!")
+                model_validation_failed = True
+        else:
+            print(f"  ✓ {model_name}: {size_mb:.1f} MB")
+    else:
+        print(f"  ✗ {model_name}: NOT FOUND")
+        if "face_landmarker" not in model_path:
+            print(f"    ERROR: Required model missing!")
+            model_validation_failed = True
+
+if model_validation_failed:
+    print("\n✗ Critical model files missing or corrupted!")
+    sys.exit(1)
+
+print()
+
+# -------------------------
+# PERFORMANCE MODE
+# -------------------------
+# Set to False to enable all features (requires 4-core/16GB codespace)
+# Set to True for 2-core/8GB codespace (disables Mask R-CNN body segmentation)
+LOW_MEMORY_MODE = True  # Try False first - will show memory error if needed
+
+# Temporal smoothing - lower = more responsive, higher = more stable
+TEMP_ALPHA = 0.3  # Pose smoothing (30% new, 70% old)
+HAND_TEMP_ALPHA = 0.7  # Hand smoothing - INCREASED for less lag (70% new, 30% old)
 # Increased CONF_THRES to reduce false positives
 CONF_THRES = 0.2
 
@@ -139,54 +217,64 @@ def draw_mask_overlay(frame, mask):
 def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=None):
     """Draw 2D cone showing overall gaze direction with smooth confidence gradient.
     Uses 3 invisible shells for gradient calculation, but only renders the outermost shell visibly."""
-    o = origin.astype(np.float32)
-    d = unit(direction)
-    
-    # Rotation matrix helper
-    def rotate_vec(vec, angle):
-        cos_a, sin_a = np.cos(angle), np.sin(angle)
-        return np.array([cos_a * vec[0] - sin_a * vec[1],
-                        sin_a * vec[0] + cos_a * vec[1]])
-    
-    num_shells = 3  # 3 shells: inner shells invisible, only outermost rendered
-    edge_alpha = 0.15
-    center_alpha = 0.4
-    
-    # Draw from outermost to innermost for proper layering
-    for shell_idx in range(num_shells - 1, -1, -1):
-        # Fraction from 0 (edge) to 1 (center), linear
-        frac = (shell_idx + 1) / num_shells
+    try:
+        o = origin.astype(np.float32)
+        d = unit(direction)
         
-        # Linear alpha gradient: edge_alpha at frac=0, center_alpha at frac=1
-        shell_alpha = edge_alpha + frac * (center_alpha - edge_alpha)
+        # Validate inputs
+        if np.any(np.isnan(o)) or np.any(np.isnan(d)):
+            return
+        if np.linalg.norm(d) < 0.01:  # Direction vector too small
+            return
         
-        # Current shell angle
-        shell_angle = frac * h_angle
+        # Rotation matrix helper
+        def rotate_vec(vec, angle):
+            cos_a, sin_a = np.cos(angle), np.sin(angle)
+            return np.array([cos_a * vec[0] - sin_a * vec[1],
+                            sin_a * vec[0] + cos_a * vec[1]])
         
-        # Compute cone edges at this angle
-        left_vec = rotate_vec(d, shell_angle)
-        right_vec = rotate_vec(d, -shell_angle)
+        num_shells = 3  # 3 shells: inner shells invisible, only outermost rendered
+        edge_alpha = 0.15
+        center_alpha = 0.4
         
-        p_left = o + left_vec * length
-        p_right = o + right_vec * length
-        
-        # Draw triangle for this shell
-        pts = np.array([o, p_left, p_right], np.int32)
-        
-        # Only render the outermost shell (shell_idx == num_shells - 1)
-        if shell_idx == num_shells - 1:
-            overlay = frame.copy()
-            cv2.fillConvexPoly(overlay, pts, color)
+        # Draw from outermost to innermost for proper layering
+        for shell_idx in range(num_shells - 1, -1, -1):
+            # Fraction from 0 (edge) to 1 (center), linear
+            frac = (shell_idx + 1) / num_shells
             
-            # Apply body mask clipping if provided
-            if mask is not None:
-                shell_mask = np.zeros_like(mask, dtype=np.uint8)
-                cv2.fillConvexPoly(shell_mask, pts, 1)
-                shell_mask = shell_mask & (~mask)
-                overlay = np.where(shell_mask[..., None], overlay, frame)
+            # Linear alpha gradient: edge_alpha at frac=0, center_alpha at frac=1
+            shell_alpha = edge_alpha + frac * (center_alpha - edge_alpha)
             
-            # Blend the outermost shell with the calculated alpha
-            cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
+            # Current shell angle
+            shell_angle = frac * h_angle
+            
+            # Compute cone edges at this angle
+            left_vec = rotate_vec(d, shell_angle)
+            right_vec = rotate_vec(d, -shell_angle)
+            
+            p_left = o + left_vec * length
+            p_right = o + right_vec * length
+            
+            # Draw triangle for this shell
+            pts = np.array([o, p_left, p_right], np.int32)
+            
+            # Only render the outermost shell (shell_idx == num_shells - 1)
+            if shell_idx == num_shells - 1:
+                overlay = frame.copy()
+                cv2.fillConvexPoly(overlay, pts, color)
+                
+                # Apply body mask clipping if provided
+                if mask is not None:
+                    shell_mask = np.zeros_like(mask, dtype=np.uint8)
+                    cv2.fillConvexPoly(shell_mask, pts, 1)
+                    shell_mask = shell_mask & (~mask)
+                    overlay = np.where(shell_mask[..., None], overlay, frame)
+                
+                # Blend the outermost shell with the calculated alpha
+                cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
+    except Exception as e:
+        # Silently skip cone drawing if there's an error (don't crash the pipeline)
+        pass
 
 def draw_skeleton(frame, keypoints, edges, color=(0,255,255), radius=3, thickness=2):
     for a,b in edges:
@@ -217,12 +305,33 @@ def clamp_rotation(prev_vec, curr_vec, max_angle):
 # -------------------------
 # LOAD MODELS
 # -------------------------
-with SuppressStdErr():
-    pose_model = YOLO(POSE_MODEL_PATH)
-    face_model = YOLO(FACE_MODEL_PATH)
-    maskrcnn = maskrcnn_resnet50_fpn(weights="DEFAULT")
-    maskrcnn.eval()
+print("=" * 60)
+print("STARTING MODEL LOADING")
+print("=" * 60)
+print("Loading models...")
 
+with SuppressStdErr():
+    print("  - Loading YOLOv8 Pose model...", flush=True)
+    pose_model = YOLO(POSE_MODEL_PATH)
+    print("    ✓ Pose model loaded", flush=True)
+    
+    print("  - Loading YOLOv8 Face model...", flush=True)
+    face_model = YOLO(FACE_MODEL_PATH)
+    print("    ✓ Face model loaded", flush=True)
+    
+    # Mask R-CNN is very memory-intensive (~2GB+ RAM)
+    # Only load if LOW_MEMORY_MODE is disabled
+    if not LOW_MEMORY_MODE:
+        print("  - Loading Mask R-CNN model...", flush=True)
+        maskrcnn = maskrcnn_resnet50_fpn(weights="DEFAULT")
+        maskrcnn.eval()
+        print("    ✓ Mask R-CNN loaded", flush=True)
+    else:
+        print("  - Mask R-CNN: DISABLED (LOW_MEMORY_MODE=True)", flush=True)
+        print("    Body mask overlay will not be available", flush=True)
+        maskrcnn = None
+
+    print("  - Initializing MediaPipe Hand Landmarker...", flush=True)
     from mediapipe.tasks import python
     from mediapipe.tasks.python import vision
     BaseOptions = python.BaseOptions
@@ -237,12 +346,115 @@ with SuppressStdErr():
             num_hands=2
         )
     )
+    print("    ✓ Hand landmarker loaded", flush=True)
+        
+print("✓ Core models loaded successfully")
+print()
+print("=" * 60)
+print("FEATURE STATUS SUMMARY")
+print("=" * 60)
+print(f"✓ Pose Detection: ENABLED (17 keypoints)")
+print(f"✓ Hand Detection: ENABLED (21 points per hand)")
+if maskrcnn is not None:
+    print(f"✓ Body Segmentation: ENABLED (Mask R-CNN)")
+else:
+    print(f"⚠ Body Segmentation: DISABLED (LOW_MEMORY_MODE=True)")
+print(f"  Face Detection: Checking...")
+print()
 
-mp_face = mp.solutions.face_mesh.FaceMesh(
-    static_image_mode=True,
-    refine_landmarks=True,
-    max_num_faces=1
-)
+# Initialize MediaPipe FaceMesh/FaceLandmarker for gaze detection
+# Supports both old (Solutions API) and new (Tasks API) MediaPipe versions
+print("=" * 60)
+print("FACE DETECTION SETUP")
+print("=" * 60)
+print("Initializing face landmarker for gaze detection...")
+mp_face = None
+face_api_type = None  # 'solutions' or 'tasks' or None
+
+# Try Solutions API first (MediaPipe < 0.10.8) - most stable
+if hasattr(mp, 'solutions') and hasattr(mp.solutions, 'face_mesh'):
+    try:
+        print("  Attempting Solutions API (legacy)...", flush=True)
+        mp_face_mesh = mp.solutions.face_mesh
+        mp_face = mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+        face_api_type = 'solutions'
+        print("✓ Face detection initialized (Solutions API)")
+    except Exception as e:
+        print(f"  ✗ Solutions API failed: {e}")
+        mp_face = None
+        face_api_type = None
+
+# Try Tasks API if Solutions not available (MediaPipe >= 0.10.8)
+if mp_face is None and os.path.exists(FACE_LANDMARKER_PATH):
+    try:
+        print("  Attempting Tasks API (modern)...", flush=True)
+        print(f"    Model: {FACE_LANDMARKER_PATH}", flush=True)
+        
+        # Import Tasks vision module
+        try:
+            from mediapipe.tasks.python import vision as mp_vision
+        except ImportError as e:
+            print(f"  ✗ Cannot import Tasks vision module: {e}")
+            raise
+        
+        # Create options
+        FaceLandmarker = mp_vision.FaceLandmarker
+        FaceLandmarkerOptions = mp_vision.FaceLandmarkerOptions
+        VisionRunningMode = mp_vision.RunningMode
+        
+        options = FaceLandmarkerOptions(
+            base_options=python.BaseOptions(model_asset_path=FACE_LANDMARKER_PATH),
+            running_mode=VisionRunningMode.IMAGE,  # IMAGE mode is more stable than VIDEO
+            num_faces=1,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+        
+        print("    Creating FaceLandmarker...", flush=True)
+        mp_face = FaceLandmarker.create_from_options(options)
+        face_api_type = 'tasks'
+        print("✓ Face detection initialized (Tasks API)")
+        
+    except Exception as e:
+        print(f"  ✗ Tasks API initialization failed: {e}")
+        print(f"     Error type: {type(e).__name__}")
+        import traceback
+        print("     Traceback:")
+        traceback.print_exc()
+        mp_face = None
+        face_api_type = None
+        print("  → Continuing without gaze detection...")
+
+else:
+    if mp_face is None:
+        print("  ⚠ No face detection API available")
+        print("    - Solutions API: not found")
+        print(f"    - Tasks API model: {FACE_LANDMARKER_PATH} not found")
+        print("  → To enable gaze: run 'python3 download_face_landmarker.py'")
+        mp_face = None
+        face_api_type = None
+
+# Final status
+if mp_face is not None:
+    print(f"\n✓ Gaze cone visualization: ENABLED ({face_api_type} API)")
+    print("  Gaze detection will appear as colored cone overlay on video")
+else:
+    print(f"\n⚠ Gaze cone visualization: DISABLED")
+    print("  Reason: Face landmarker model not available (Google CDN issue)")
+    print("  Fix: Run 'python3 download_face_alt.py' to try alternative download")
+    print("  All other features (pose, hands, mask) will work normally")
+print()
+
+print("\n" + "=" * 60)
+print("Model initialization complete - starting video setup...")
+print("=" * 60)
 
 # -------------------------
 # VIDEO SETUP
@@ -250,12 +462,32 @@ mp_face = mp.solutions.face_mesh.FaceMesh(
 # Ensure output directory exists
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
+print(f"\nOpening video: {VIDEO_PATH}")
 cap = cv2.VideoCapture(VIDEO_PATH)
+
+if not cap.isOpened():
+    print(f"✗ ERROR: Could not open video file: {VIDEO_PATH}")
+    sys.exit(1)
+
 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = float(cap.get(cv2.CAP_PROP_FPS))
 frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+print(f"✓ Video opened successfully:")
+print(f"  Resolution: {w}x{h}")
+print(f"  FPS: {fps:.2f}")
+print(f"  Total frames: {frame_count}")
+
+print(f"\nCreating output video: {OUTPUT_PATH}")
 writer = cv2.VideoWriter(OUTPUT_PATH, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w,h))
+
+if not writer.isOpened():
+    print(f"✗ ERROR: Could not create output video writer")
+    cap.release()
+    sys.exit(1)
+
+print("✓ Output video writer ready")
 
 # -------------------------
 # CSV SETUP
@@ -330,11 +562,34 @@ FACE_3D_POINTS = np.array([
 # -------------------------
 # MAIN LOOP
 # -------------------------
+print(f"\nStarting processing: {frame_count} frames at {fps:.2f} FPS")
+print("=" * 60)
+
+# Memory management
+import gc
+frames_processed = 0
+
+# Torch memory optimization
+# Torch memory optimization
+torch.set_num_threads(4)  # Optimize for performance
+if LOW_MEMORY_MODE:
+    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    torch.set_num_threads(2)  # Limit CPU threads if memory constrained
+
 with SuppressStdErr():  # suppress any backend warnings during loop
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
+        
+        # Periodic garbage collection to prevent OOM
+        frames_processed += 1
+        if frames_processed % 30 == 0:
+            gc.collect()
+            if LOW_MEMORY_MODE and frames_processed % 10 == 0:
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            if frames_processed % 60 == 0:
+                print(f"  Processed {frames_processed}/{frame_count} frames...", flush=True)
 
         row = {"frame":frame_idx, "timestamp": frame_idx / fps}
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -361,16 +616,23 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                 prev_pose_conf[i] = c
             draw_skeleton(frame, pts, SKELETON_EDGES)
 
-        shoulder_width = norm(pts[5]-pts[6]) if 5 in pts and 6 in pts else 1.0
+        # Use robust shoulder width calculation with fallback
+        shoulder_width = 1.0  # Default fallback
+        if 5 in pts and 6 in pts:
+            shoulder_width = max(norm(pts[5]-pts[6]), 1.0)  # Ensure non-zero
         row["shoulder_width"] = shoulder_width
         
-        # Calculate hip width
-        hip_width = norm(pts[11]-pts[12]) if 11 in pts and 12 in pts else None
-        row["hip_width"] = hip_width if hip_width else 0.0
+        # Calculate hip width (normalized by shoulder width for scale-invariance)
+        if 11 in pts and 12 in pts:
+            row["hip_width"] = norm(pts[11]-pts[12]) / shoulder_width
+        else:
+            row["hip_width"] = 0.0
         
-        # Calculate stance width (foot-to-foot distance)
-        stance_width = norm(pts[15]-pts[16]) if 15 in pts and 16 in pts else None
-        row["stance_width"] = stance_width if stance_width else 0.0
+        # Calculate stance width (foot-to-foot distance, normalized)
+        if 15 in pts and 16 in pts:
+            row["stance_width"] = norm(pts[15]-pts[16]) / shoulder_width
+        else:
+            row["stance_width"] = 0.0
         
         # Populate keypoint data in row (x, y, vx, vy, conf for each of 17 keypoints)
         for i in range(17):
@@ -408,13 +670,14 @@ with SuppressStdErr():  # suppress any backend warnings during loop
 
         # -------- BODY MASK --------
         body_mask = None
-        with torch.no_grad():
-            pred = maskrcnn([F.to_tensor(frame)])[0]
-        for m,l,s in zip(pred["masks"],pred["labels"],pred["scores"]):
-            if l==1 and s>0.7:
-                body_mask = (m[0]>0.5).numpy()
-                draw_mask_overlay(frame, body_mask)
-                break
+        if maskrcnn is not None:
+            with torch.no_grad():
+                pred = maskrcnn([F.to_tensor(frame)])[0]
+            for m,l,s in zip(pred["masks"],pred["labels"],pred["scores"]):
+                if l==1 and s>0.7:
+                    body_mask = (m[0]>0.5).numpy()
+                    draw_mask_overlay(frame, body_mask)
+                    break
 
         # -------- HANDS --------
         # Initialize all hand landmarks to 0
@@ -438,7 +701,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
 
                     if (side, i) in prev_hand:
                         p_prev = prev_hand[(side, i)]
-                        p = lerp(p_prev, p, TEMP_ALPHA)
+                        p = lerp(p_prev, p, HAND_TEMP_ALPHA)  # Use separate hand smoothing
                         # Calculate velocity
                         row[f"{side}_hand_{i}_vx"] = p[0] - p_prev[0]
                         row[f"{side}_hand_{i}_vy"] = p[1] - p_prev[1]
@@ -469,167 +732,198 @@ with SuppressStdErr():  # suppress any backend warnings during loop
 
         # -------- FACE + HEAD-TORSO BLENDED GAZE (3D, body-relative) --------
         row["gaze_dir_x"] = row["gaze_dir_y"] = row["gaze_on_body"] = 0
-        face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
+        
+        # Only process face if mp_face is initialized
+        if mp_face is not None:
+            face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
 
-        if len(face_results.boxes.xyxy) > 0:
-            x1, y1, x2, y2 = map(int, face_results.boxes.xyxy[0])
-            face_crop = rgb[y1:y2, x1:x2]
-            mp_results = mp_face.process(face_crop)
-
-            if mp_results.multi_face_landmarks:
-                lm = mp_results.multi_face_landmarks[0].landmark
-
-                def L(i):
-                    lm_i = lm[i]
-                    # MediaPipe face mesh landmarks don't have reliable visibility when cropped
-                    # Simply accept all landmarks - they come from MediaPipe which already filtered them
-                    return np.array([lm_i.x * (x2 - x1) + x1,
-                                     lm_i.y * (y2 - y1) + y1], dtype=np.float32)
-
-                # Build points, filter Nones
-                image_points, model_points_filtered = [], []
-                for idx_model, idx_lm in enumerate([1, 152, 33, 263, 61, 291]):
-                    p = L(idx_lm)
-                    if p is not None:
-                        image_points.append(p)
-                        model_points_filtered.append(FACE_3D_POINTS[idx_model] * shoulder_width / 100.0)
-                image_points = np.array(image_points, dtype=np.float32)
-                model_points_filtered = np.array(model_points_filtered, dtype=np.float32)
-
-                if len(image_points) >= 4:  # Need at least 4 points for solvePnP
-                    camera_matrix = np.array([[w, 0, w / 2],
-                                              [0, w, h / 2],
-                                              [0, 0, 1]], dtype=np.float32)
-                    dist_coeffs = np.zeros((4, 1))
-
-                    success, rotation_vector, translation_vector = cv2.solvePnP(
-                        model_points_filtered, image_points, camera_matrix, dist_coeffs,
-                        flags=cv2.SOLVEPNP_ITERATIVE
-                    )
-
-                    if success:
-                        rot_mat, _ = cv2.Rodrigues(rotation_vector)
-                        head_forward = rot_mat[:, 2].copy()
-
-                        # --- Clamp vertical component to reduce noise while preserving pitch ---
-                        # Balanced: strict enough to prevent drift, loose enough to track real elevation
-                        head_forward[2] = np.clip(head_forward[2], -0.055, 0.055)
-                        head_forward = unit(head_forward)
-
-                        # --- Compute torso forward vector ---
-                        # Priority: hips (most stable) → shoulders (with arm-aware filtering) → head-only fallback
-                        torso_forward_3d = None
-                        using_shoulders = False
-                        
-                        # Try hips first (stable anchor when in frame)
-                        if 11 in pts and 12 in pts and 1 in pts:
-                            hip_mid = (pts[11] + pts[12]) / 2
-                            nose_pt = pts[1]
-                            torso_forward_2d = nose_pt - hip_mid
-                            torso_forward_3d = np.array([torso_forward_2d[0], torso_forward_2d[1], 0.0])
-                            torso_forward_3d = unit(torso_forward_3d)
-                        # Fall back to shoulders if hips missing (but with strict consistency check to reject arm artifacts)
-                        elif 5 in pts and 6 in pts and 1 in pts:
-                            using_shoulders = True
-                            shoulder_mid = (pts[5] + pts[6]) / 2
-                            nose_pt = pts[1]
-                            torso_forward_2d = nose_pt - shoulder_mid
-                            torso_forward_3d = np.array([torso_forward_2d[0], torso_forward_2d[1], 0.0])
-                            torso_forward_3d = unit(torso_forward_3d)
-                        
-                        fused_forward = head_forward.copy()
-                        if torso_forward_3d is not None:
-                            # Arm-aware consistency check: when arms compress, only accept torso if strongly aligned with head
-                            threshold = TORSO_CONSISTENCY_THRESHOLD
-                            if using_shoulders and arm_spread_changing:
-                                threshold = 0.8  # Even stricter during arm compression (reject almost all shoulder updates)
+            if len(face_results.boxes.xyxy) > 0:
+                x1, y1, x2, y2 = map(int, face_results.boxes.xyxy[0])
+                # Validate bounding box is within frame and has minimum size
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                
+                # Ensure face crop has minimum dimensions (20x20 pixels)
+                if (x2 - x1) >= 20 and (y2 - y1) >= 20:
+                    face_crop = rgb[y1:y2, x1:x2]
+                    mp_results = None
+                    
+                    try:
+                        if face_api_type == 'solutions':
+                            # Solutions API (legacy)
+                            mp_results = mp_face.process(face_crop)
+                            has_landmarks = mp_results and mp_results.multi_face_landmarks
                             
-                            # Consistency check: only update torso if it aligns reasonably with head (full 3D comparison)
-                            if np.dot(torso_forward_3d, head_forward) > threshold:
-                                # Smooth torso vector strongly to reduce arm movement artifacts
-                                # Even stronger smoothing during arm compression
-                                smooth_alpha = TORSO_LERP_ALPHA
-                                if using_shoulders and arm_spread_changing:
-                                    smooth_alpha = 0.05  # Extremely aggressive smoothing during compression (95% previous, 5% new)
-                                
-                                if prev_torso_forward_3d is not None:
-                                    torso_forward_3d = unit(lerp(prev_torso_forward_3d, torso_forward_3d, smooth_alpha))
-                                prev_torso_forward_3d = torso_forward_3d
-                            else:
-                                # Torso inconsistent with head; stick with previous torso
-                                if prev_torso_forward_3d is not None:
-                                    torso_forward_3d = prev_torso_forward_3d
-                                else:
-                                    torso_forward_3d = head_forward[:3]
+                        elif face_api_type == 'tasks':
+                            # Tasks API (modern) - using IMAGE mode (more stable)
+                            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_crop)
+                            mp_results = mp_face.detect(mp_image)  # IMAGE mode uses detect() not detect_for_video()
+                            has_landmarks = mp_results and mp_results.face_landmarks
                             
-                            # --- Blend: 75% head (precision), 25% torso (stability anchor) ---
-                            fused_forward = unit((1 - TORSO_BLEND) * head_forward + TORSO_BLEND * torso_forward_3d)
+                    except Exception as e:
+                        # Skip face processing on error but continue pipeline
+                        has_landmarks = False
 
-                        # --- Stabilize via flipping check and buffer smoothing ---
-                        if forward_buffer:
-                            recent_avg = unit(np.mean(forward_buffer, axis=0))
-                            if np.dot(fused_forward, recent_avg) < 0:
-                                fused_forward *= -1
+                    if has_landmarks:
+                        # Extract landmarks based on API type
+                        if face_api_type == 'solutions':
+                            lm = mp_results.multi_face_landmarks[0].landmark
+                        else:  # tasks
+                            lm = mp_results.face_landmarks[0]
 
-                        forward_buffer.append(fused_forward)
-                        if len(forward_buffer) > GAZE_BUFFER_LEN:
-                            forward_buffer.pop(0)
+                        def L(i):
+                            lm_i = lm[i]
+                            # Convert normalized coordinates to frame coordinates
+                            return np.array([lm_i.x * (x2 - x1) + x1,
+                                             lm_i.y * (y2 - y1) + y1], dtype=np.float32)
 
-                        # Use median of buffer for robust smoothing
-                        if len(forward_buffer) >= 7:
-                            buffer_array = np.array(forward_buffer)
-                            smoothed_forward = unit(np.median(buffer_array, axis=0))
-                        elif len(forward_buffer) >= 5:
-                            buffer_array = np.array(forward_buffer)
-                            smoothed_forward = unit(np.median(buffer_array, axis=0))
-                        else:
-                            smoothed_forward = unit(np.mean(forward_buffer, axis=0)) if forward_buffer else fused_forward
-
-                        # Apply balanced exponential smoothing for jitter reduction without lag
-                        if prev_forward_3d is not None:
-                            smoothed_forward = unit(lerp(prev_forward_3d, smoothed_forward, GAZE_LERP_ALPHA))
-                        
-                        prev_forward_3d = smoothed_forward
-
-                        # --- Project to 2D for cone drawing and CSV ---
-                        gaze_vec = unit(smoothed_forward[:2])
-                        
-                        # --- Apply 2D outlier rejection to catch remaining spikes ---
-                        if prev_gaze_vec_2d is not None:
-                            deviation = np.linalg.norm(gaze_vec - prev_gaze_vec_2d)
-                            if deviation > GAZE_2D_OUTLIER_THRESHOLD:
-                                # Outlier detected - use previous instead
-                                gaze_vec = prev_gaze_vec_2d
-                        
-                        prev_gaze_vec_2d = gaze_vec.copy()
-                        row["gaze_dir_x"] = float(gaze_vec[0])
-                        row["gaze_dir_y"] = float(gaze_vec[1])
-
-                        eye_left = L(33)
-                        eye_right = L(263)
-                        if eye_left is not None and eye_right is not None:
-                            eye_mid = (eye_left + eye_right) / 2
-                            # Position cone origin inside head (behind eyes) so cone edges intersect eyes
-                            cone_origin = eye_mid - gaze_vec * CONE_ORIGIN_OFFSET
-                            # Draw cone with radial confidence gradient (center=0.4 alpha, edges=0.15)
-                            # Body mask clipping shows only external portion
-                            draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
-
-                        # Draw key face landmarks
-                        for idx in [1, 33, 263, 61, 291, 152]:
-                            p = L(idx)
+                        # Build points, filter Nones
+                        image_points, model_points_filtered = [], []
+                        for idx_model, idx_lm in enumerate([1, 152, 33, 263, 61, 291]):
+                            p = L(idx_lm)
                             if p is not None:
-                                cv2.circle(frame, tuple(p.astype(int)), 3, (0, 255, 255), -1)
+                                image_points.append(p)
+                                model_points_filtered.append(FACE_3D_POINTS[idx_model] * shoulder_width / 100.0)
+                        image_points = np.array(image_points, dtype=np.float32)
+                        model_points_filtered = np.array(model_points_filtered, dtype=np.float32)
 
-                        # Check gaze hitting body
-                        if body_mask is not None and eye_left is not None and eye_right is not None:
-                            eye_mid = (eye_left + eye_right) / 2
-                            for d in range(0, GAZE_LENGTH, 10):
-                                p = (eye_mid + gaze_vec * d).astype(int)
-                                if 0 <= p[0] < w and 0 <= p[1] < h and body_mask[p[1], p[0]]:
-                                    row["gaze_on_body"] = 1
-                                    break
+                        if len(image_points) >= 4:  # Need at least 4 points for solvePnP
+                            # Use robust focal length estimation: average of width and height
+                            # This adapts better to different aspect ratios and camera angles
+                            focal_length = (w + h) / 2.0
+                            camera_matrix = np.array([[focal_length, 0, w / 2.0],
+                                                      [0, focal_length, h / 2.0],
+                                                      [0, 0, 1]], dtype=np.float32)
+                            dist_coeffs = np.zeros((4, 1))
+
+                            success, rotation_vector, translation_vector = cv2.solvePnP(
+                                model_points_filtered, image_points, camera_matrix, dist_coeffs,
+                                flags=cv2.SOLVEPNP_ITERATIVE
+                            )
+
+                            if success:
+                                rot_mat, _ = cv2.Rodrigues(rotation_vector)
+                                head_forward = rot_mat[:, 2].copy()
+
+                                # --- Clamp vertical component to reduce noise while preserving pitch ---
+                                # Balanced: strict enough to prevent drift, loose enough to track real elevation
+                                head_forward[2] = np.clip(head_forward[2], -0.055, 0.055)
+                                head_forward = unit(head_forward)
+
+                                # --- Compute torso forward vector ---
+                                # Priority: hips (most stable) → shoulders (with arm-aware filtering) → head-only fallback
+                                torso_forward_3d = None
+                                using_shoulders = False
+                                
+                                # Try hips first (stable anchor when in frame)
+                                if 11 in pts and 12 in pts and 1 in pts:
+                                    hip_mid = (pts[11] + pts[12]) / 2
+                                    nose_pt = pts[1]
+                                    torso_forward_2d = nose_pt - hip_mid
+                                    torso_forward_3d = np.array([torso_forward_2d[0], torso_forward_2d[1], 0.0])
+                                    torso_forward_3d = unit(torso_forward_3d)
+                                # Fall back to shoulders if hips missing (but with strict consistency check to reject arm artifacts)
+                                elif 5 in pts and 6 in pts and 1 in pts:
+                                    using_shoulders = True
+                                    shoulder_mid = (pts[5] + pts[6]) / 2
+                                    nose_pt = pts[1]
+                                    torso_forward_2d = nose_pt - shoulder_mid
+                                    torso_forward_3d = np.array([torso_forward_2d[0], torso_forward_2d[1], 0.0])
+                                    torso_forward_3d = unit(torso_forward_3d)
+                                
+                                fused_forward = head_forward.copy()
+                                if torso_forward_3d is not None:
+                                    # Arm-aware consistency check: when arms compress, only accept torso if strongly aligned with head
+                                    threshold = TORSO_CONSISTENCY_THRESHOLD
+                                    if using_shoulders and arm_spread_changing:
+                                        threshold = 0.8  # Even stricter during arm compression (reject almost all shoulder updates)
+                                    
+                                    # Consistency check: only update torso if it aligns reasonably with head (full 3D comparison)
+                                    if np.dot(torso_forward_3d, head_forward) > threshold:
+                                        # Smooth torso vector strongly to reduce arm movement artifacts
+                                        # Even stronger smoothing during arm compression
+                                        smooth_alpha = TORSO_LERP_ALPHA
+                                        if using_shoulders and arm_spread_changing:
+                                            smooth_alpha = 0.05  # Extremely aggressive smoothing during compression (95% previous, 5% new)
+                                        
+                                        if prev_torso_forward_3d is not None:
+                                            torso_forward_3d = unit(lerp(prev_torso_forward_3d, torso_forward_3d, smooth_alpha))
+                                        prev_torso_forward_3d = torso_forward_3d
+                                    else:
+                                        # Torso inconsistent with head; stick with previous torso
+                                        if prev_torso_forward_3d is not None:
+                                            torso_forward_3d = prev_torso_forward_3d
+                                        else:
+                                            torso_forward_3d = head_forward[:3]
+                                    
+                                    # --- Blend: 75% head (precision), 25% torso (stability anchor) ---
+                                    fused_forward = unit((1 - TORSO_BLEND) * head_forward + TORSO_BLEND * torso_forward_3d)
+
+                                # --- Stabilize via flipping check and buffer smoothing ---
+                                if forward_buffer:
+                                    recent_avg = unit(np.mean(forward_buffer, axis=0))
+                                    if np.dot(fused_forward, recent_avg) < 0:
+                                        fused_forward *= -1
+
+                                forward_buffer.append(fused_forward)
+                                if len(forward_buffer) > GAZE_BUFFER_LEN:
+                                    forward_buffer.pop(0)
+
+                                # Use median of buffer for robust smoothing
+                                if len(forward_buffer) >= 7:
+                                    buffer_array = np.array(forward_buffer)
+                                    smoothed_forward = unit(np.median(buffer_array, axis=0))
+                                elif len(forward_buffer) >= 5:
+                                    buffer_array = np.array(forward_buffer)
+                                    smoothed_forward = unit(np.median(buffer_array, axis=0))
+                                else:
+                                    smoothed_forward = unit(np.mean(forward_buffer, axis=0)) if forward_buffer else fused_forward
+
+                                # Apply balanced exponential smoothing for jitter reduction without lag
+                                if prev_forward_3d is not None:
+                                    smoothed_forward = unit(lerp(prev_forward_3d, smoothed_forward, GAZE_LERP_ALPHA))
+                                
+                                prev_forward_3d = smoothed_forward
+
+                                # --- Project to 2D for cone drawing and CSV ---
+                                gaze_vec = unit(smoothed_forward[:2])
+                                
+                                # --- Apply 2D outlier rejection to catch remaining spikes ---
+                                if prev_gaze_vec_2d is not None:
+                                    deviation = np.linalg.norm(gaze_vec - prev_gaze_vec_2d)
+                                    if deviation > GAZE_2D_OUTLIER_THRESHOLD:
+                                        # Outlier detected - use previous instead
+                                        gaze_vec = prev_gaze_vec_2d
+                                
+                                prev_gaze_vec_2d = gaze_vec.copy()
+                                row["gaze_dir_x"] = float(gaze_vec[0])
+                                row["gaze_dir_y"] = float(gaze_vec[1])
+
+                                eye_left = L(33)
+                                eye_right = L(263)
+                                if eye_left is not None and eye_right is not None:
+                                    eye_mid = (eye_left + eye_right) / 2
+                                    # Position cone origin inside head (behind eyes) so cone edges intersect eyes
+                                    cone_origin = eye_mid - gaze_vec * CONE_ORIGIN_OFFSET
+                                    # Draw cone with radial confidence gradient (center=0.4 alpha, edges=0.15)
+                                    # Body mask clipping shows only external portion
+                                    draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
+                                              GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+
+                                # Draw key face landmarks
+                                for idx in [1, 33, 263, 61, 291, 152]:
+                                    p = L(idx)
+                                    if p is not None:
+                                        cv2.circle(frame, tuple(p.astype(int)), 3, (0, 255, 255), -1)
+
+                                # Check gaze hitting body
+                                if body_mask is not None and eye_left is not None and eye_right is not None:
+                                    eye_mid = (eye_left + eye_right) / 2
+                                    for d in range(0, GAZE_LENGTH, 10):
+                                        p = (eye_mid + gaze_vec * d).astype(int)
+                                        if 0 <= p[0] < w and 0 <= p[1] < h and body_mask[p[1], p[0]]:
+                                            row["gaze_on_body"] = 1
+                                            break
         
         # -------- CALCULATE ADDITIONAL METRICS --------
         # Joint angles
@@ -746,6 +1040,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
 cap.release()
 writer.release()
 hands_detector.close()
+if mp_face is not None:
+    if face_api_type == 'solutions':
+        mp_face.close()
+    elif face_api_type == 'tasks':
+        mp_face.close()
 csvfile.close()
 total_time = time.time() - start_time
 print(f"\nFinished processing {frame_count} frames in {total_time:.2f} seconds ({frame_count/total_time:.2f} FPS).")

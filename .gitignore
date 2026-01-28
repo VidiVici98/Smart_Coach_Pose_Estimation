@@ -63,6 +63,7 @@ data/output/*
 # Jupyter
 .ipynb_checkpoints
 *.ipynb
+!setup_and_run.ipynb
 
 # Testing
 .pytest_cache/

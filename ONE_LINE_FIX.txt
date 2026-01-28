@@ -1,0 +1,3 @@
+# COPY AND PASTE THIS INTO YOUR TERMINAL - ONE LINE
+
+pip install --force-reinstall opencv-python-headless && python3 scripts/processing/run_pipeline.py
