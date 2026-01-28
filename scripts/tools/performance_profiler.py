@@ -14,12 +14,18 @@ Output:
 """
 
 import time
-import psutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List
 import csv
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("Warning: psutil not available, resource monitoring disabled")
 
 class PerformanceProfiler:
     """Profile detection pipeline performance."""
@@ -32,11 +38,12 @@ class PerformanceProfiler:
     def start_monitoring(self):
         """Start monitoring system resources."""
         self.start_time = time.time()
-        self.process = psutil.Process()
+        if PSUTIL_AVAILABLE:
+            self.process = psutil.Process()
         
     def sample(self, frame_idx: int):
         """Take a performance sample."""
-        if self.process is None:
+        if not PSUTIL_AVAILABLE or self.process is None:
             return
             
         try:
