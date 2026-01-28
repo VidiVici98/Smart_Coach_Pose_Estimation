@@ -1,0 +1,33 @@
+io_paths:
+  video_path: data/input/test_video.mp4
+  output_path: data/output/output_full.mp4
+  csv_path: data/output/analytics.csv
+models:
+  pose_model_path: data/models/yolov8m-pose.pt
+  face_model_path: data/models/yolov8n-face.pt
+  hand_model_path: data/models/hand_landmarker.task
+detection:
+  temp_alpha: 0.6
+  conf_thres: 0.2
+visualization:
+  alpha_body: 0.35
+  alpha_cone: 0.25
+  gaze_length: 2000
+gaze:
+  gaze_cone_h_angle: 16.0
+  gaze_cone_v_angle: 9.0
+  cone_origin_offset: 40
+  max_gaze_rot: 0.12
+  gaze_buffer_len: 9
+  torso_blend: 0.25
+  gaze_lerp_alpha: 0.15
+  gaze_2d_outlier_threshold: 0.15
+  torso_lerp_alpha: 0.3
+  torso_consistency_threshold: 0.5
+performance:
+  enable_gpu: true
+  maskrcnn_cache_frames: 5
+  skip_hand_on_low_conf: false
+logging:
+  verbose: false
+  log_performance: false
