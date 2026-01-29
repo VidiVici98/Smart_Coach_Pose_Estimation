@@ -108,12 +108,19 @@ else
 fi
 
 echo ""
-echo "6. Checking LOW_MEMORY_MODE setting..."
-if grep -q "LOW_MEMORY_MODE = True" scripts/processing/run_pipeline.py 2>/dev/null; then
-    echo -e "${GREEN}✓${NC} LOW_MEMORY_MODE enabled (recommended for codespace)"
+echo "6. Checking LOW_MEMORY_MODE configuration..."
+# Check if running in codespace
+if [ -n "$CODESPACES" ] || [ -n "$SMART_COACH_CODESPACE" ]; then
+    if [ -z "$LOW_MEMORY_MODE" ] || [ "$LOW_MEMORY_MODE" != "false" ]; then
+        echo -e "${GREEN}✓${NC} LOW_MEMORY_MODE will be enabled (codespace detected)"
+        echo "  Mask R-CNN body segmentation will be disabled to save ~2GB RAM"
+    else
+        echo -e "${YELLOW}⚠${NC} LOW_MEMORY_MODE disabled (LOW_MEMORY_MODE=false)"
+        echo "  All features enabled (requires 4-core/16GB codespace)"
+    fi
 else
-    echo -e "${YELLOW}⚠${NC} LOW_MEMORY_MODE not enabled"
-    echo "  Consider enabling in scripts/processing/run_pipeline.py"
+    echo -e "${BLUE}ℹ${NC} Not in codespace - LOW_MEMORY_MODE will be OFF by default"
+    echo "  Set LOW_MEMORY_MODE=true to enable memory saving mode"
 fi
 
 echo ""

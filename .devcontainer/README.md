@@ -72,9 +72,14 @@ python scripts/processing/run_pipeline.py
 ### Enable Full Features
 If you have a 4-core/16GB codespace and want to enable body segmentation:
 
-1. Edit `scripts/processing/run_pipeline.py`
-2. Change `LOW_MEMORY_MODE = True` to `LOW_MEMORY_MODE = False`
-3. Re-run the pipeline
+Set the environment variable before running:
+```bash
+export LOW_MEMORY_MODE=false
+python scripts/processing/run_pipeline.py
+```
+
+The pipeline automatically detects codespace and enables LOW_MEMORY_MODE.
+Use the environment variable to override this behavior.
 
 ### Use Full Precision Models
 If you want higher accuracy and have bandwidth/storage:
@@ -89,7 +94,8 @@ python scripts/tools/download_models.py
 
 ### Out of Memory
 If you get memory errors:
-- Ensure `LOW_MEMORY_MODE = True` in run_pipeline.py
+- Codespace will auto-enable LOW_MEMORY_MODE
+- Check: `echo $LOW_MEMORY_MODE` (should be empty or 'true')
 - Consider using a smaller/shorter test video
 - Upgrade to 4-core/16GB codespace
 

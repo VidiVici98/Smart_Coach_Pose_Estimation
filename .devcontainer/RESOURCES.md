@@ -44,12 +44,14 @@ Disables Mask R-CNN to save ~2GB RAM:
 - All other features work normally
 
 ### To Enable All Features (4-core codespace)
-Set environment variable:
+Set environment variable before running:
 ```bash
 export LOW_MEMORY_MODE=false
+python scripts/processing/run_pipeline.py
 ```
 
-Or edit scripts/processing/run_pipeline.py (line ~113)
+The pipeline auto-detects codespace and enables LOW_MEMORY_MODE by default.
+Override with the environment variable to use all features.
 
 ## Processing Optimization
 

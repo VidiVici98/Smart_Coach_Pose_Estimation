@@ -125,23 +125,23 @@ def download_mediapipe_hand_model(use_lightweight=False):
     """Download MediaPipe Hand Landmarker model.
     
     Args:
-        use_lightweight: If True, downloads lightweight model (~0.3MB). 
-                        If False, downloads full model (~26MB).
+        use_lightweight: If True, downloads lightweight model (~3.6MB float16). 
+                        If False, downloads full model (~26MB full precision).
+                        Note: Currently only float16 version is available from MediaPipe.
     """
     print("\n3. MediaPipe Hand Landmarker Model...")
     
     models_dir = Path("data/models")
     models_dir.mkdir(parents=True, exist_ok=True)
     
-    # Choose model version based on environment or flag
+    # Note: MediaPipe only provides float16 version publicly
+    # The float16 version is ~3.6MB and is suitable for both cases
+    url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+    
     if use_lightweight:
-        # Lightweight model - faster download, lower memory, slightly less accurate
-        url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
         print("  Using lightweight model (float16) - optimized for codespace")
     else:
-        # Full precision model - better accuracy, larger size
-        url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
-        print("  Using full model")
+        print("  Using standard model (float16)")
     
     destination = models_dir / "hand_landmarker.task"
     
