@@ -3,7 +3,7 @@
 Two-Pass Pipeline for Smart Coach Pose Estimation
 
 Pass 1: Process all frames to collect raw detections
-Pass 2: Post-process collected data to extrapolate missing/inaccurate landmarks
+Pass 2: Post-process collected data to interpolate missing/inaccurate landmarks
 
 This approach ensures:
 - Complete temporal context for interpolation
@@ -75,8 +75,8 @@ def interpolate_missing(times, values, method='cubic'):
             )
         interpolated = f(times)
         return interpolated
-    except Exception as e:
-        # Fallback to linear
+    except (ValueError, RuntimeError) as e:
+        # Fallback to linear if method fails
         try:
             f = interpolate.interp1d(
                 times[valid_mask],
@@ -86,7 +86,7 @@ def interpolate_missing(times, values, method='cubic'):
                 fill_value=np.nan
             )
             return f(times)
-        except:
+        except (ValueError, RuntimeError):
             return values
 
 def smooth_trajectory(values, window_length=11, polyorder=3):
@@ -121,7 +121,7 @@ def smooth_trajectory(values, window_length=11, polyorder=3):
             polyorder=polyorder
         )
         return smoothed
-    except:
+    except (ValueError, RuntimeError):
         return values
 
 def post_process_dataframe(df, config=None):
@@ -231,7 +231,10 @@ def post_process_dataframe(df, config=None):
                     
                     df_processed[col] = values
                 
-                # Recalculate velocities
+        # Recalculate velocities after smoothing
+        if has_data:
+            for coord in ['x', 'y']:
+                col = f'{side}_hand_{i}_{coord}'
                 vel_col = f'{side}_hand_{i}_v{coord}'
                 if col in df_processed.columns and vel_col in df_processed.columns:
                     values = df_processed[col].values
@@ -297,12 +300,13 @@ def main():
     # Check if Pass 1 already completed
     if os.path.exists(CSV_PATH_RAW):
         print("Found existing raw detections from Pass 1")
-        use_existing = input("Use existing raw data? (y/n): ").strip().lower()
-        if use_existing != 'y':
+        print("Use existing raw data? (y/n, default=y): ", end='', flush=True)
+        use_existing = input().strip().lower()
+        if use_existing == 'n':
             os.remove(CSV_PATH_RAW)
             run_pass1 = True
         else:
-            run_pass1 = False
+            run_pass1 = False  # Default to using existing
     else:
         run_pass1 = True
     
@@ -313,10 +317,18 @@ def main():
         print("=" * 60)
         print("\nRunning main pipeline...")
         
-        # Import and modify the main pipeline to save raw data
-        import run_pipeline
-        # The pipeline will generate data/output/analytics.csv
-        # We'll rename it to analytics_raw.csv
+        # Run the pipeline as a subprocess to ensure it executes properly
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "scripts/processing/run_pipeline.py"],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            print(f"\n✗ Pass 1 failed with error:")
+            print(result.stderr)
+            return 1
         
         # Check if analytics.csv was created
         if os.path.exists("data/output/analytics.csv"):
