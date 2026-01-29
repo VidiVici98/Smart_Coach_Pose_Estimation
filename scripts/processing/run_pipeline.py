@@ -67,43 +67,37 @@ FACE_LANDMARKER_PATH = "data/models/face_landmarker.task"  # For MediaPipe Tasks
 # Validate model files before loading
 print("Validating model files...")
 model_validation_failed = False
-for model_name, model_path, expected_min_mb, expected_max_mb in [
-    ("YOLOv8 Pose", POSE_MODEL_PATH, 40, 60),
-    ("YOLOv8 Face", FACE_MODEL_PATH, 5, 10),
-    ("Hand Landmarker", HAND_MODEL_PATH, 6, 10),
-    ("Face Landmarker", FACE_LANDMARKER_PATH, 25, 28)
+for model_name, model_path, expected_min_mb, expected_max_mb, is_optional in [
+    ("YOLOv8 Pose", POSE_MODEL_PATH, 40, 60, False),
+    ("YOLOv8 Face", FACE_MODEL_PATH, 5, 10, False),
+    ("Hand Landmarker", HAND_MODEL_PATH, 0.2, 30, True),  # Accept lightweight (0.3MB) or full (26MB) versions
+    ("Face Landmarker", FACE_LANDMARKER_PATH, 3.0, 30, True)  # Accept lightweight (3.6MB) or full (26MB) versions
 ]:
     if os.path.exists(model_path):
         size_mb = os.path.getsize(model_path) / (1024 * 1024)
         
         # Check if file size is in expected range
         if size_mb < expected_min_mb or size_mb > expected_max_mb:
-            print(f"  ✗ {model_name}: CORRUPTED ({size_mb:.1f} MB, expected {expected_min_mb}-{expected_max_mb} MB)")
+            print(f"  ✗ {model_name}: INVALID SIZE ({size_mb:.1f} MB, expected {expected_min_mb}-{expected_max_mb} MB)")
             
-            if "face_landmarker" in model_path:
-                print(f"    Removing corrupted file and re-downloading...")
-                try:
-                    os.remove(model_path)
-                    print(f"    ⚠ Google CDN is serving wrong file (3.6MB instead of 26MB)")
-                    print(f"    This is a known issue with MediaPipe's storage bucket")
-                    print(f"    Skipping gaze detection for now...")
-                    print(f"    ")
-                    print(f"    WORKAROUND: Download manually from:")
-                    print(f"    https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task")
-                    print(f"    or https://github.com/google-ai-edge/mediapipe/tree/master/mediapipe/tasks/testdata/vision")
-                    # Don't attempt re-download since Google's CDN is broken
-                except Exception as e:
-                    print(f"\n    ✗ Cleanup failed: {e}")
+            if is_optional:
+                print(f"    ⚠ Optional model - pipeline will continue without this feature")
             else:
                 print(f"    ERROR: Critical model file corrupted!")
                 model_validation_failed = True
         else:
-            print(f"  ✓ {model_name}: {size_mb:.1f} MB")
+            # Note if using lightweight version
+            if size_mb < 10 and "Landmarker" in model_name:
+                print(f"  ✓ {model_name}: {size_mb:.1f} MB (lightweight version)")
+            else:
+                print(f"  ✓ {model_name}: {size_mb:.1f} MB")
     else:
         print(f"  ✗ {model_name}: NOT FOUND")
-        if "face_landmarker" not in model_path:
+        if not is_optional:
             print(f"    ERROR: Required model missing!")
             model_validation_failed = True
+        else:
+            print(f"    ⚠ Optional model - pipeline will continue without this feature")
 
 if model_validation_failed:
     print("\n✗ Critical model files missing or corrupted!")
@@ -339,14 +333,25 @@ with SuppressStdErr():
     HandLandmarker = vision.HandLandmarker
     HandLandmarkerOptions = vision.HandLandmarkerOptions
 
-    hands_detector = HandLandmarker.create_from_options(
-        HandLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
-            running_mode=RunningMode.IMAGE,
-            num_hands=2
-        )
-    )
-    print("    ✓ Hand landmarker loaded", flush=True)
+    hands_detector = None
+    if os.path.exists(HAND_MODEL_PATH):
+        try:
+            hands_detector = HandLandmarker.create_from_options(
+                HandLandmarkerOptions(
+                    base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
+                    running_mode=RunningMode.IMAGE,
+                    num_hands=2
+                )
+            )
+            print("    ✓ Hand landmarker loaded", flush=True)
+        except Exception as e:
+            print(f"    ⚠ Hand landmarker failed to load: {e}", flush=True)
+            print("    → Continuing without hand detection...", flush=True)
+            hands_detector = None
+    else:
+        print("    ⚠ Hand landmarker model not found", flush=True)
+        print("    → Continuing without hand detection...", flush=True)
+        hands_detector = None
         
 print("✓ Core models loaded successfully")
 print()
@@ -354,7 +359,10 @@ print("=" * 60)
 print("FEATURE STATUS SUMMARY")
 print("=" * 60)
 print(f"✓ Pose Detection: ENABLED (17 keypoints)")
-print(f"✓ Hand Detection: ENABLED (21 points per hand)")
+if hands_detector is not None:
+    print(f"✓ Hand Detection: ENABLED (21 points per hand)")
+else:
+    print(f"⚠ Hand Detection: DISABLED (model not available)")
 if maskrcnn is not None:
     print(f"✓ Body Segmentation: ENABLED (Mask R-CNN)")
 else:
@@ -598,7 +606,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         pts = {}
         pts_conf = {}  # Store confidence scores
         result = pose_model(frame, conf=CONF_THRES, max_det=1)[0]
-        if result.keypoints is not None:
+        if result.keypoints is not None and len(result.keypoints.data) > 0:
             kps = result.keypoints.data[0].cpu().numpy()
             for i,(x,y,c) in enumerate(kps):
                 pts_conf[i] = c  # Store confidence
@@ -689,46 +697,48 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                 row[f"{side}_hand_{i}_vy"] = 0.0
             row[f"{side}_trigger_pull"] = 0
         
-        hand_res = hands_detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
-        if hand_res.hand_landmarks:
-            for side,hand in zip(["L","R"], hand_res.hand_landmarks):
-                pts_hand=[]
-                index_y=None
-                for i,lm in enumerate(hand):
-                    px = int(np.clip(lm.x*w, 0, w-1))
-                    py = int(np.clip(lm.y*h, 0, h-1))
-                    p = np.array([px, py], dtype=np.float32)
+        if hands_detector is not None:
+            hand_res = hands_detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+            if hand_res.hand_landmarks:
+                for side,hand in zip(["L","R"], hand_res.hand_landmarks):
+                    pts_hand=[]
+                    index_y=None
+                    for i,lm in enumerate(hand):
+                        px = int(np.clip(lm.x*w, 0, w-1))
+                        py = int(np.clip(lm.y*h, 0, h-1))
+                        p = np.array([px, py], dtype=np.float32)
 
-                    if (side, i) in prev_hand:
-                        p_prev = prev_hand[(side, i)]
-                        p = lerp(p_prev, p, HAND_TEMP_ALPHA)  # Use separate hand smoothing
-                        # Calculate velocity
-                        row[f"{side}_hand_{i}_vx"] = p[0] - p_prev[0]
-                        row[f"{side}_hand_{i}_vy"] = p[1] - p_prev[1]
-                    else:
-                        p = np.array([px, py], dtype=np.float32)  # Fallback for missing detection
-                        row[f"{side}_hand_{i}_vx"] = 0.0
-                        row[f"{side}_hand_{i}_vy"] = 0.0
-                    
-                    # Store position in row
-                    row[f"{side}_hand_{i}_x"] = p[0]
-                    row[f"{side}_hand_{i}_y"] = p[1]
-                    
-                    prev_hand[(side, i)] = p
-                    ip=(int(p[0]),int(p[1]))
-                    pts_hand.append(ip)
-                    cv2.circle(frame,ip,3,(255,0,0),-1)
-                    if i==8: index_y=p[1]
+                        if (side, i) in prev_hand:
+                            p_prev = prev_hand[(side, i)]
+                            p = lerp(p_prev, p, HAND_TEMP_ALPHA)  # Use separate hand smoothing
+                            # Calculate velocity
+                            row[f"{side}_hand_{i}_vx"] = p[0] - p_prev[0]
+                            row[f"{side}_hand_{i}_vy"] = p[1] - p_prev[1]
+                        else:
+                            p = np.array([px, py], dtype=np.float32)  # Fallback for missing detection
+                            row[f"{side}_hand_{i}_vx"] = 0.0
+                            row[f"{side}_hand_{i}_vy"] = 0.0
+                        
+                        # Store position in row
+                        row[f"{side}_hand_{i}_x"] = p[0]
+                        row[f"{side}_hand_{i}_y"] = p[1]
+                        
+                        prev_hand[(side, i)] = p
+                        ip=(int(p[0]),int(p[1]))
+                        pts_hand.append(ip)
+                        cv2.circle(frame,ip,3,(255,0,0),-1)
+                        if i==8: index_y=p[1]
 
-                for a,b in HAND_CONNECTIONS:
-                    cv2.line(frame,pts_hand[a],pts_hand[b],(255,0,0),2)
+                    for a,b in HAND_CONNECTIONS:
+                        cv2.line(frame,pts_hand[a],pts_hand[b],(255,0,0),2)
 
-                row[f"{side}_trigger_pull"] = int(
-                    index_y is not None and
-                    prev_index_y[side] is not None and
-                    index_y < prev_index_y[side]
-                )
-                prev_index_y[side] = index_y
+                    row[f"{side}_trigger_pull"] = int(
+                        index_y is not None and
+                        prev_index_y[side] is not None and
+                        index_y < prev_index_y[side]
+                    )
+                    prev_index_y[side] = index_y
+        # else: hands_detector is None, all hand metrics remain at 0 (initialized above)
 
         # -------- FACE + HEAD-TORSO BLENDED GAZE (3D, body-relative) --------
         row["gaze_dir_x"] = row["gaze_dir_y"] = row["gaze_on_body"] = 0
@@ -951,7 +961,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         # Check if both hands detected in hand landmarks
         hand_detected = {"L": False, "R": False}
         hand_centers = {}
-        if hand_res.hand_landmarks and len(hand_res.hand_landmarks) >= 1:
+        if hands_detector is not None and 'hand_res' in locals() and hand_res.hand_landmarks and len(hand_res.hand_landmarks) >= 1:
             for idx, (side, hand) in enumerate(zip(["L", "R"], hand_res.hand_landmarks)):
                 if idx < len(hand_res.hand_landmarks):
                     hand_detected[side] = True
@@ -1039,7 +1049,8 @@ with SuppressStdErr():  # suppress any backend warnings during loop
 # -------------------------
 cap.release()
 writer.release()
-hands_detector.close()
+if hands_detector is not None:
+    hands_detector.close()
 if mp_face is not None:
     if face_api_type == 'solutions':
         mp_face.close()
