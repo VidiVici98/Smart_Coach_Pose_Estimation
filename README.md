@@ -1,6 +1,6 @@
 # Smart Coach – Pose Detection & Metrics Pipeline
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=VidiVici98/Smart_Coach_Pose_Estimation)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/VidiVici98/Smart_Coach_Pose_Estimation?quickstart=1)
 
 ## 🚀 Quick Start
 

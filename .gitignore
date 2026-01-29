@@ -24,6 +24,10 @@ ENV/
 *.sublime-project
 *.sublime-workspace
 
+# Devcontainer build artifacts
+.devcontainer/.dockerignore
+.devcontainer/docker-compose.yml
+
 # OS files
 .DS_Store
 Thumbs.db
