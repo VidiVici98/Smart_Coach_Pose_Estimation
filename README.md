@@ -322,6 +322,18 @@ See [ROADMAP.md](ROADMAP.md) for detailed plans, AI coaching opportunities, and 
 
 ---
 
+## Custom AI Agents
+
+This repository includes **specialized AI agents** with deep knowledge of the codebase:
+
+* **Computer Vision Pipeline Specialist** - Expert in pose estimation, model integration, and pipeline optimization
+* **Python Testing & Code Quality Expert** - Expert in testing, debugging, and CI/CD setup
+* **Documentation & Setup Specialist** - Expert in technical writing, setup guides, and troubleshooting
+
+These agents can help you work more effectively with the Smart Coach codebase. See **[docs/USING_CUSTOM_AGENTS.md](docs/USING_CUSTOM_AGENTS.md)** for usage examples and best practices.
+
+---
+
 ## License & Use
 
 This repository is intended for **research, development, and training analysis** purposes.
