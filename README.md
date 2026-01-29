@@ -1,6 +1,19 @@
 # Smart Coach – Pose Detection & Metrics Pipeline
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/VidiVici98/Smart_Coach_Pose_Estimation?quickstart=1)
+
 ## 🚀 Quick Start
+
+### Option 1: GitHub Codespace (Fastest) ☁️
+
+Click the badge above or:
+1. Click the green "Code" button → "Codespaces" tab → "Create codespace"
+2. Wait for automatic setup (~2-3 minutes)
+3. Run: `python scripts/processing/run_pipeline.py`
+
+**See [docs/guides/START_HERE_CODESPACE.md](docs/guides/START_HERE_CODESPACE.md) for details**
+
+### Option 2: Local Setup 💻
 
 **New to this repo or setting up a fresh environment?** Start here:
 

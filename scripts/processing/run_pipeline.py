@@ -108,9 +108,24 @@ print()
 # -------------------------
 # PERFORMANCE MODE
 # -------------------------
+# Auto-detect codespace environment and enable LOW_MEMORY_MODE
 # Set to False to enable all features (requires 4-core/16GB codespace)
 # Set to True for 2-core/8GB codespace (disables Mask R-CNN body segmentation)
-LOW_MEMORY_MODE = True  # Try False first - will show memory error if needed
+
+# Check if running in codespace or low-memory environment
+IS_CODESPACE = os.environ.get('CODESPACES') or os.environ.get('SMART_COACH_CODESPACE')
+
+# Auto-enable LOW_MEMORY_MODE for codespace unless explicitly disabled
+if IS_CODESPACE:
+    LOW_MEMORY_MODE = os.environ.get('LOW_MEMORY_MODE', 'true').lower() != 'false'
+    if LOW_MEMORY_MODE:
+        print("🌐 Codespace detected - LOW_MEMORY_MODE enabled", flush=True)
+        print("   (Set env LOW_MEMORY_MODE=false to enable all features)", flush=True)
+else:
+    # For local environments, default to False (all features enabled)
+    LOW_MEMORY_MODE = os.environ.get('LOW_MEMORY_MODE', 'false').lower() == 'true'
+
+print()
 
 # Temporal smoothing - lower = more responsive, higher = more stable
 TEMP_ALPHA = 0.3  # Pose smoothing (30% new, 70% old)
