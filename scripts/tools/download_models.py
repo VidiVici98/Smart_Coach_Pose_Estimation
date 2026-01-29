@@ -121,20 +121,40 @@ def download_yolo_models():
     
     return True
 
-def download_mediapipe_hand_model():
-    """Download MediaPipe Hand Landmarker model."""
+def download_mediapipe_hand_model(use_lightweight=False):
+    """Download MediaPipe Hand Landmarker model.
+    
+    Args:
+        use_lightweight: If True, downloads lightweight model (~0.3MB). 
+                        If False, downloads full model (~26MB).
+    """
     print("\n3. MediaPipe Hand Landmarker Model...")
     
     models_dir = Path("data/models")
     models_dir.mkdir(parents=True, exist_ok=True)
     
-    url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+    # Choose model version based on environment or flag
+    if use_lightweight:
+        # Lightweight model - faster download, lower memory, slightly less accurate
+        url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+        print("  Using lightweight model (float16) - optimized for codespace")
+    else:
+        # Full precision model - better accuracy, larger size
+        url = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+        print("  Using full model")
+    
     destination = models_dir / "hand_landmarker.task"
     
     if destination.exists():
         print(f"  File already exists: {destination}")
         size_mb = destination.stat().st_size / (1024 * 1024)
         print(f"  Size: {size_mb:.1f} MB")
+        
+        # Skip re-download prompt in automated environments
+        if os.environ.get('SMART_COACH_CODESPACE') or os.environ.get('CI'):
+            print("  Skipping download (file exists).\n")
+            return True
+            
         response = input("  Re-download? (y/N): ").strip().lower()
         if response not in ['y', 'yes']:
             print("  Skipping download.\n")
@@ -163,6 +183,17 @@ def main():
     models_dir.mkdir(parents=True, exist_ok=True)
     print(f"Models directory: {models_dir}\n")
     
+    # Check if we're in a codespace or should use lightweight models
+    use_lightweight = (
+        os.environ.get('SMART_COACH_CODESPACE') == 'true' or
+        os.environ.get('USE_LIGHTWEIGHT_MODELS') == 'true' or
+        os.environ.get('CODESPACES') is not None
+    )
+    
+    if use_lightweight:
+        print("🌐 Codespace/Lightweight mode detected")
+        print("   Using optimized models for faster download and lower memory usage\n")
+    
     print("=" * 70)
     print("Downloading Models")
     print("=" * 70)
@@ -170,7 +201,7 @@ def main():
     # Download models
     results = {
         "YOLOv8 Models": download_yolo_models(),
-        "MediaPipe Hand Model": download_mediapipe_hand_model()
+        "MediaPipe Hand Model": download_mediapipe_hand_model(use_lightweight=use_lightweight)
     }
     
     # Summary

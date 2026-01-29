@@ -1,0 +1,54 @@
+{
+	"name": "Smart Coach Pose Estimation",
+	"image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+	
+	// Configure tool-specific properties
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"ms-toolsai.jupyter"
+			],
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python",
+				"python.linting.enabled": true,
+				"python.linting.pylintEnabled": false,
+				"python.formatting.autopep8Path": "/usr/local/py-utils/bin/autopep8",
+				"python.formatting.blackPath": "/usr/local/py-utils/bin/black",
+				"python.linting.flake8Path": "/usr/local/py-utils/bin/flake8"
+			}
+		},
+		"codespaces": {
+			"openFiles": [
+				"README.md",
+				"docs/guides/START_HERE_CODESPACE.md"
+			]
+		}
+	},
+
+	// Features to add to the dev container
+	"features": {
+		"ghcr.io/devcontainers/features/git:1": {}
+	},
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally
+	"forwardPorts": [],
+
+	// Use 'postCreateCommand' to run commands after the container is created
+	"postCreateCommand": "bash .devcontainer/setup.sh",
+
+	// Use 'postStartCommand' to run commands each time the container starts
+	"postStartCommand": "python --version && pip --version",
+
+	// Configure environment variables
+	"containerEnv": {
+		"PYTORCH_NO_NNPACK": "1",
+		"TORCH_CPP_LOG_LEVEL": "ERROR",
+		"SMART_COACH_CODESPACE": "true",
+		"PYTHONUNBUFFERED": "1"
+	},
+
+	// Set 'remoteUser' to run as a non-root user
+	"remoteUser": "vscode"
+}
