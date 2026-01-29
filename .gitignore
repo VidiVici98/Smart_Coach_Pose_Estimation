@@ -39,7 +39,6 @@ wandb/
 
 # Data: keep data directory structure, ignore large files
 # Model weights are NOT tracked - only directory structure and README
-data/models/**
 !data/models/.gitkeep
 !data/models/README.md
 
