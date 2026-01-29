@@ -11,7 +11,7 @@ This directory contains helper scripts created to recover the Smart Coach pipeli
 | **setup_and_run.ipynb** | Interactive setup notebook | Open in Jupyter/VS Code |
 | **check_status.py** | Quick diagnostic | `python3 check_status.py` |
 | **diagnose_and_fix.py** | Full diagnostic + auto-fix | `python3 diagnose_and_fix.py` |
-| **quick_check.sh** | Bash diagnostic | `bash quick_check.sh` |
+| **scripts/setup/quick_check.sh** | Bash diagnostic | `bash scripts/setup/quick_check.sh` |
 | **CODESPACE_RECOVERY.md** | Detailed recovery guide | Reference documentation |
 
 ## The Problem
@@ -96,7 +96,7 @@ python3 diagnose_and_fix.py
 ```
 
 ### 5. Bash Diagnostic
-**File:** `quick_check.sh`
+**File:** `scripts/setup/quick_check.sh`
 
 Shell-based checker:
 - Simple bash commands
@@ -105,7 +105,7 @@ Shell-based checker:
 
 **Usage:**
 ```bash
-bash quick_check.sh
+bash scripts/setup/quick_check.sh
 ```
 
 ## After Running the Fix
@@ -142,7 +142,7 @@ See [docs/USAGE_GUIDE.md](../docs/USAGE_GUIDE.md) for metric interpretation.
 ### Scripts Won't Run
 ```bash
 # Make them executable
-chmod +x emergency_fix.sh quick_check.sh
+chmod +x scripts/setup/emergency_fix.sh scripts/setup/quick_check.sh
 
 # Run with explicit interpreter
 bash emergency_fix.sh
@@ -188,7 +188,7 @@ These scripts automate that recovery process so you can get back to work quickly
 Once everything is working, you can optionally remove these helper files:
 
 ```bash
-rm -f emergency_fix.sh check_status.py diagnose_and_fix.py quick_check.sh
+rm -f scripts/setup/emergency_fix.sh scripts/setup/check_status.py scripts/setup/diagnose_and_fix.py scripts/setup/quick_check.sh
 rm -f START_HERE_CODESPACE.md CODESPACE_RECOVERY.md
 rm -f setup_and_run.ipynb
 rm -f RECOVERY_TOOLS_README.md  # This file

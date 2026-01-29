@@ -8,7 +8,7 @@ After repo reorganization + switching to codespace, you're missing the YOLO mode
 Run this in your terminal:
 
 ```bash
-bash emergency_fix.sh
+bash scripts/setup/emergency_fix.sh
 ```
 
 This will:
@@ -22,7 +22,7 @@ Expected time: 2-5 minutes for setup + processing time (depends on video length)
 
 ## 📊 Alternative: Use the Interactive Notebook
 
-Open and run: **`setup_and_run.ipynb`**
+Open and run: **`docs/notebooks/setup_and_run.ipynb`**
 
 This gives you cell-by-cell control with status checks at each step.
 
@@ -33,13 +33,13 @@ This gives you cell-by-cell control with status checks at each step.
 Check what's missing:
 
 ```bash
-python3 check_status.py
+python3 scripts/setup/check_status.py
 ```
 
 Or full diagnostic:
 
 ```bash
-python3 diagnose_and_fix.py
+python3 scripts/setup/diagnose_and_fix.py
 ```
 
 ---
@@ -181,7 +181,7 @@ I've added several helper files to the repo root to make this easier:
 2. **setup_and_run.ipynb** - Interactive Jupyter notebook version
 3. **check_status.py** - Quick diagnostic
 4. **diagnose_and_fix.py** - Comprehensive diagnostic with auto-fix
-5. **quick_check.sh** - Bash diagnostic
+5. **scripts/setup/quick_check.sh** - Bash diagnostic
 6. **CODESPACE_RECOVERY.md** - Detailed recovery guide
 7. **THIS FILE** - Quick start reference
 
@@ -192,7 +192,7 @@ All of these are git-ignored by default, so they won't pollute your repo.
 ## 🎬 Ready? Let's Go!
 
 ```bash
-bash emergency_fix.sh
+bash scripts/setup/emergency_fix.sh
 ```
 
 That's it! 🚀
