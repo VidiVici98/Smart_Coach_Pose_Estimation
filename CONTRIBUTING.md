@@ -73,7 +73,7 @@ bash scripts/tools/setup.sh
    python scripts/tools/verify_setup.py
    ```
 
-**For detailed setup instructions, see [SETUP.md](SETUP.md).**
+**For detailed setup instructions, see [SETUP.md](docs/guides/SETUP.md).**
 
 ## Making Changes
 

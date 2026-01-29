@@ -1,3 +1,4 @@
+<!-- Last Modified: 2026-01-29 -->
 # Smart Coach: AI Coding Instructions
 
 ## Project Purpose

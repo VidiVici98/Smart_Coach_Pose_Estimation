@@ -205,8 +205,8 @@ You switched from local laptop to codespace after repo reorganization. The reorg
 
 1. Check: `START_HERE_CODESPACE.md` (overview)
 2. Check: `CODESPACE_RECOVERY.md` (detailed guide)
-3. Check: `TROUBLESHOOTING.md` (comprehensive troubleshooting)
-4. Check: `SETUP.md` (full setup from scratch)
+3. Check: `docs/troubleshooting/TROUBLESHOOTING.md` (comprehensive troubleshooting)
+4. Check: `docs/guides/SETUP.md` (full setup from scratch)
 
 ---
 
