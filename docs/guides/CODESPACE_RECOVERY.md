@@ -137,7 +137,7 @@ I've created helper scripts in the repo root:
 
 1. **check_status.py** - Quick diagnostic (no external dependencies needed)
 2. **diagnose_and_fix.py** - Comprehensive diagnostic with auto-fix attempts  
-3. **quick_check.sh** - Bash version of quick checks
+3. **scripts/setup/quick_check.sh** - Bash version of quick checks
 
 Run any of these to see current status.
 

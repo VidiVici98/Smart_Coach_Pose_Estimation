@@ -44,9 +44,9 @@ python scripts/processing/run_pipeline.py
 
 | What You Need | Read This |
 |---------------|-----------|
-| First time setup | `SETUP.md` |
+| First time setup | `docs/guides/SETUP.md` |
 | Mobile workflow | `MOBILE_WORKFLOW.md` ⭐ |
-| Problems/errors | `TROUBLESHOOTING.md` |
+| Problems/errors | `docs/troubleshooting/TROUBLESHOOTING.md` |
 | Project overview | `README.md` |
 | What changed | `RECOVERY_SUMMARY.md` |
 

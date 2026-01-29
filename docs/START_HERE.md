@@ -33,7 +33,7 @@ After losing your laptop with local development, this PR has made the Smart Coac
 cat QUICKSTART_MOBILE.md
 
 # 2. Read the full mobile guide
-cat MOBILE_WORKFLOW.md | less
+cat docs/guides/MOBILE_WORKFLOW.md | less
 
 # 3. Check your current status
 python scripts/tools/verify_setup.py
@@ -65,9 +65,9 @@ ls -lh data/output/
 | Priority | Document | What It Does |
 |----------|----------|--------------|
 | ⭐⭐⭐ | `QUICKSTART_MOBILE.md` | Mobile quick reference card |
-| ⭐⭐⭐ | `MOBILE_WORKFLOW.md` | Comprehensive mobile guide |
-| ⭐⭐ | `SETUP.md` | Detailed setup instructions |
-| ⭐⭐ | `TROUBLESHOOTING.md` | Solutions to common problems |
+| ⭐⭐⭐ | `docs/guides/MOBILE_WORKFLOW.md` | Comprehensive mobile guide |
+| ⭐⭐ | `docs/guides/SETUP.md` | Detailed setup instructions |
+| ⭐⭐ | `docs/troubleshooting/TROUBLESHOOTING.md` | Solutions to common problems |
 | ⭐ | `RECOVERY_SUMMARY.md` | What changed and why |
 
 ## 📊 Mobile Workflow Recommendation
@@ -223,7 +223,7 @@ The repository is now **production-ready** and **mobile-friendly**.
 ```bash
 cat QUICKSTART_MOBILE.md  # If on mobile
 # OR
-cat SETUP.md              # If on desktop
+cat docs/guides/SETUP.md              # If on desktop
 ```
 
 **Then:**
@@ -247,9 +247,9 @@ python scripts/processing/run_pipeline.py  # Run pipeline
 
 # Get help
 cat QUICKSTART_MOBILE.md    # Mobile quick start
-cat MOBILE_WORKFLOW.md      # Full mobile guide
-cat TROUBLESHOOTING.md      # Problem solving
-cat SETUP.md                # Detailed setup
+cat docs/guides/MOBILE_WORKFLOW.md      # Full mobile guide
+cat docs/troubleshooting/TROUBLESHOOTING.md      # Problem solving
+cat docs/guides/SETUP.md                # Detailed setup
 ```
 
 ---

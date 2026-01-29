@@ -35,8 +35,8 @@ python scripts/processing/run_pipeline.py
 - `data/output/output_full.mp4` - Annotated video with pose overlays
 - `data/output/analytics.csv` - Frame-by-frame metrics (285 fields per frame)
 
-**📖 For detailed setup instructions, see [SETUP.md](SETUP.md)**  
-**📱 Working on mobile? See [MOBILE_WORKFLOW.md](MOBILE_WORKFLOW.md)**
+**📖 For detailed setup instructions, see [SETUP.md](docs/guides/SETUP.md)**  
+**📱 Working on mobile? See [MOBILE_WORKFLOW.md](docs/guides/MOBILE_WORKFLOW.md)**
 
 ---
 

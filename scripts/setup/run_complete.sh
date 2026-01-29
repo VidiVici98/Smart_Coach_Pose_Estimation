@@ -21,11 +21,11 @@ if [ -f "data/models/face_landmarker.task" ]; then
         echo "✗ Invalid model found (${SIZE_MB} MB, expected 25-28 MB)"
         echo "  Attempting download..."
         rm -f "data/models/face_landmarker.task"
-        python3 download_face_alt.py
+        python3 scripts/setup/download_face_alt.py
     fi
 else
     echo "Model not found - attempting download..."
-    python3 download_face_alt.py
+    python3 scripts/setup/download_face_alt.py
 fi
 
 # Check final status
