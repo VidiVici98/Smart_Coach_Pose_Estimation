@@ -107,8 +107,8 @@ class CoachingRule:
         if num_violations < self.min_frames or percentage < self.frame_percentage:
             return None
         
-        # Calculate statistics
-        violation_values = values[violations]
+        # Calculate statistics - use values_clean with violations as boolean mask
+        violation_values = values_clean[violations]
         
         return {
             'rule_name': self.name,

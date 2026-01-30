@@ -117,7 +117,11 @@ class FirearmDetector:
             
             if is_target and conf > best_conf:
                 best_conf = conf
-                bbox = box.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
+                # Handle both real YOLO boxes (with .cpu()) and mock boxes (numpy arrays)
+                if hasattr(box.xyxy[0], 'cpu'):
+                    bbox = box.xyxy[0].cpu().numpy()  # Real YOLO box
+                else:
+                    bbox = np.array(box.xyxy[0])  # Mock or already numpy
                 best_detection = (bbox, conf, cls_name)
         
         if best_detection is None:
