@@ -132,7 +132,10 @@ The system intentionally combines **best-in-class models for specific tasks** ra
 | Full-body pose estimation  | YOLOv8 Pose                 |
 | Hand landmark detection    | MediaPipe Hands (Tasks API) |
 | Body segmentation          | Mask R-CNN                  |
-| Object detection (firearm) | Fine-tuned YOLOv5 / YOLOv8  |
+| Firearm detection          | YOLOv8 Object Detection     |
+| Face detection             | YOLOv8 Face                 |
+
+**New: Firearm Detection** - Accurate muzzle direction tracking with hybrid fusion. See [Firearm Detection Guide](docs/FIREARM_DETECTION_GUIDE.md).
 
 This hybrid approach allows each subsystem to be upgraded independently.
 
