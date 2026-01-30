@@ -59,6 +59,9 @@ VIDEO_PATH  = "data/input/test_video.mp4"
 OUTPUT_PATH = "data/output/output_full.mp4"
 CSV_PATH    = "data/output/analytics.csv"
 
+# Limit processing to first N frames for testing (set to None to process entire video)
+MAX_FRAMES = 30  # Process only first 30 frames for quick validation
+
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
 HAND_MODEL_PATH = "data/models/hand_landmarker.task"
@@ -603,6 +606,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
+            break
+        
+        # Check if we've reached the max frame limit
+        if MAX_FRAMES is not None and frames_processed >= MAX_FRAMES:
+            print(f"\n✓ Reached MAX_FRAMES limit ({MAX_FRAMES}), stopping processing...")
             break
         
         # Periodic garbage collection to prevent OOM
