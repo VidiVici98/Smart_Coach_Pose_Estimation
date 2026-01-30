@@ -73,30 +73,33 @@ class CoachingRule:
         if self.metric not in df.columns:
             return None
         
-        # Get metric values, skip NaN
-        values = df[self.metric].dropna()
-        if len(values) == 0:
+        # Get metric values, skip NaN but keep indices aligned
+        values = df[self.metric]
+        valid_mask = ~values.isna()
+        values_clean = values[valid_mask]
+        
+        if len(values_clean) == 0:
             return None
         
         # Apply comparison logic
         if self.comparison == MetricComparison.GREATER:
-            violations = values > self.threshold
+            violations = values_clean > self.threshold
         elif self.comparison == MetricComparison.LESS:
-            violations = values < self.threshold
+            violations = values_clean < self.threshold
         elif self.comparison == MetricComparison.ABS_GREATER:
-            violations = np.abs(values) > self.threshold
+            violations = np.abs(values_clean) > self.threshold
         elif self.comparison == MetricComparison.ABS_LESS:
-            violations = np.abs(values) < self.threshold
+            violations = np.abs(values_clean) < self.threshold
         elif self.comparison == MetricComparison.BETWEEN:
             low, high = self.threshold
-            violations = (values >= low) & (values <= high)
+            violations = (values_clean >= low) & (values_clean <= high)
         elif self.comparison == MetricComparison.OUTSIDE:
             low, high = self.threshold
-            violations = (values < low) | (values > high)
+            violations = (values_clean < low) | (values_clean > high)
         else:
             return None
         
-        violation_indices = df.index[violations].tolist()
+        violation_indices = values_clean[violations].index.tolist()
         num_violations = len(violation_indices)
         
         # Check thresholds
