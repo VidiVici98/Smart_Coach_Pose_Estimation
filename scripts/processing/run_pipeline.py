@@ -62,7 +62,10 @@ CSV_PATH    = "data/output/analytics.csv"
 # Limit processing to first N frames for testing (set to None to process entire video)
 # Or set SAMPLE_FRAMES to process only specific frames from different points
 MAX_FRAMES = None  # Process entire video
-SAMPLE_FRAMES = [5, 15, 25, 35, 45]  # Process only these specific frames for validation
+# Broader sampling across full video duration to capture hands and diverse poses
+# Frame 10: early action, 30: establishing, 60: mid-action, 75: peak, 
+# 100: follow-through, 120: recovery, 140: end sequence
+SAMPLE_FRAMES = [10, 30, 60, 75, 100, 120, 140]  # Broader video coverage for validation
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
@@ -253,10 +256,10 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             return np.array([cos_a * vec[0] - sin_a * vec[1],
                             sin_a * vec[0] + cos_a * vec[1]])
         
-        # Increased visibility: more shells and higher alpha values
+        # Enhanced visibility: more shells and higher alpha values for screenshots
         num_shells = 5  # More shells for smoother gradient
-        edge_alpha = 0.25  # Increased from 0.15 for better visibility
-        center_alpha = 0.6  # Increased from 0.4 for better visibility
+        edge_alpha = 0.35  # Increased for better visibility in screenshots
+        center_alpha = 0.7  # Increased for better visibility in screenshots
         
         # Draw from outermost to innermost for proper layering
         for shell_idx in range(num_shells - 1, -1, -1):

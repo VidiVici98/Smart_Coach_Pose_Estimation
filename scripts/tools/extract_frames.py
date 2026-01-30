@@ -39,7 +39,8 @@ def extract_frames(video_path, frame_indices, output_dir):
 
 if __name__ == "__main__":
     video_path = "data/output/output_full.mp4"
-    frame_indices = [5, 15, 25, 35, 45]
+    # Updated to match new broader sampling across video
+    frame_indices = [10, 30, 60, 75, 100, 120, 140]
     output_dir = "data/output/screenshots"
     
     print("=" * 60)
