@@ -59,6 +59,9 @@ VIDEO_PATH  = "data/input/test_video.mp4"
 OUTPUT_PATH = "data/output/output_full.mp4"
 CSV_PATH    = "data/output/analytics.csv"
 
+# Limit processing to first N frames for testing (set to None to process entire video)
+MAX_FRAMES = 30  # Process only first 30 frames for quick validation
+
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
 HAND_MODEL_PATH = "data/models/hand_landmarker.task"
@@ -134,7 +137,7 @@ HAND_TEMP_ALPHA = 0.7  # Hand smoothing - INCREASED for less lag (70% new, 30% o
 CONF_THRES = 0.2
 
 ALPHA_BODY = 0.35
-ALPHA_CONE = 0.25
+ALPHA_CONE = 0.25  # NOTE: Not used in current draw_cone implementation (uses internal alpha values)
 GAZE_LENGTH = 2000
 GAZE_CONE_H_ANGLE = np.radians(16.0)  # Horizontal half-angle
 GAZE_CONE_V_ANGLE = np.radians(9.0)   # Vertical half-angle
@@ -225,15 +228,21 @@ def draw_mask_overlay(frame, mask):
 
 def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=None):
     """Draw 2D cone showing overall gaze direction with smooth confidence gradient.
-    Uses 3 invisible shells for gradient calculation, but only renders the outermost shell visibly."""
+    Draws multiple shells with increasing transparency from center to edge for gradient effect.
+    
+    FIXED: Previously only rendered outermost shell (causing invisible cones).
+    Now renders all 5 shells with increased alpha values (0.25-0.6) for visibility.
+    """
     try:
         o = origin.astype(np.float32)
         d = unit(direction)
         
         # Validate inputs
         if np.any(np.isnan(o)) or np.any(np.isnan(d)):
+            print("DEBUG: Invalid origin or direction (NaN detected)")
             return
         if np.linalg.norm(d) < 0.01:  # Direction vector too small
+            print("DEBUG: Direction vector too small")
             return
         
         # Rotation matrix helper
@@ -242,13 +251,14 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             return np.array([cos_a * vec[0] - sin_a * vec[1],
                             sin_a * vec[0] + cos_a * vec[1]])
         
-        num_shells = 3  # 3 shells: inner shells invisible, only outermost rendered
-        edge_alpha = 0.15
-        center_alpha = 0.4
+        # Increased visibility: more shells and higher alpha values
+        num_shells = 5  # More shells for smoother gradient
+        edge_alpha = 0.25  # Increased from 0.15 for better visibility
+        center_alpha = 0.6  # Increased from 0.4 for better visibility
         
         # Draw from outermost to innermost for proper layering
         for shell_idx in range(num_shells - 1, -1, -1):
-            # Fraction from 0 (edge) to 1 (center), linear
+            # Fraction from 0 (edge) to 1 (center)
             frac = (shell_idx + 1) / num_shells
             
             # Linear alpha gradient: edge_alpha at frac=0, center_alpha at frac=1
@@ -267,23 +277,27 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             # Draw triangle for this shell
             pts = np.array([o, p_left, p_right], np.int32)
             
-            # Only render the outermost shell (shell_idx == num_shells - 1)
-            if shell_idx == num_shells - 1:
-                overlay = frame.copy()
-                cv2.fillConvexPoly(overlay, pts, color)
-                
-                # Apply body mask clipping if provided
-                if mask is not None:
-                    shell_mask = np.zeros_like(mask, dtype=np.uint8)
-                    cv2.fillConvexPoly(shell_mask, pts, 1)
-                    shell_mask = shell_mask & (~mask)
-                    overlay = np.where(shell_mask[..., None], overlay, frame)
-                
-                # Blend the outermost shell with the calculated alpha
-                cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
+            # Render ALL shells, not just the outermost one
+            overlay = frame.copy()
+            cv2.fillConvexPoly(overlay, pts, color)
+            
+            # Apply body mask clipping if provided
+            if mask is not None:
+                shell_mask = np.zeros_like(mask, dtype=np.uint8)
+                cv2.fillConvexPoly(shell_mask, pts, 1)
+                # Invert mask: show cone where body is NOT present
+                shell_mask = shell_mask & (~mask)
+                overlay = np.where(shell_mask[..., None], overlay, frame)
+            
+            # Blend this shell with the calculated alpha
+            cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
+            
+        print(f"DEBUG: Drew gaze cone at origin {o.astype(int)} with direction {d}")
     except Exception as e:
-        # Silently skip cone drawing if there's an error (don't crash the pipeline)
-        pass
+        # Print error for debugging but don't crash the pipeline
+        print(f"DEBUG: Error in draw_cone: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
 def draw_skeleton(frame, keypoints, edges, color=(0,255,255), radius=3, thickness=2):
     for a,b in edges:
@@ -603,6 +617,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
+            break
+        
+        # Check if we've reached the max frame limit
+        if MAX_FRAMES is not None and frames_processed >= MAX_FRAMES:
+            print(f"\n✓ Reached MAX_FRAMES limit ({MAX_FRAMES}), stopping processing...")
             break
         
         # Periodic garbage collection to prevent OOM
@@ -927,13 +946,32 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                 eye_left = L(33)
                                 eye_right = L(263)
                                 if eye_left is not None and eye_right is not None:
-                                    eye_mid = (eye_left + eye_right) / 2
-                                    # Position cone origin inside head (behind eyes) so cone edges intersect eyes
-                                    cone_origin = eye_mid - gaze_vec * CONE_ORIGIN_OFFSET
-                                    # Draw cone with radial confidence gradient (center=0.4 alpha, edges=0.15)
-                                    # Body mask clipping shows only external portion
-                                    draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                              GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+                                    # Validate eye positions are reasonable
+                                    eye_distance = np.linalg.norm(eye_right - eye_left)
+                                    if eye_distance > 10:  # Minimum eye distance (pixels) for valid detection
+                                        eye_mid = (eye_left + eye_right) / 2
+                                        # Position cone origin inside head (behind eyes) so cone edges intersect eyes
+                                        cone_origin = eye_mid - gaze_vec * CONE_ORIGIN_OFFSET
+                                        
+                                        # Validate cone origin is within reasonable bounds
+                                        if 0 <= cone_origin[0] < w and 0 <= cone_origin[1] < h:
+                                            # Debug: Print gaze detection status
+                                            if frame_idx < 5 or frame_idx % 30 == 0:  # Print for first 5 frames and every 30th frame
+                                                print(f"  Frame {frame_idx}: Gaze detected - origin: {cone_origin.astype(int)}, direction: {gaze_vec}")
+                                            
+                                            # Draw cone with radial confidence gradient (center=0.6 alpha, edges=0.25)
+                                            # Body mask clipping shows only external portion
+                                            draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
+                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+                                        else:
+                                            if frame_idx < 5:
+                                                print(f"  Frame {frame_idx}: Cone origin out of bounds: {cone_origin.astype(int)}")
+                                    else:
+                                        if frame_idx < 5:
+                                            print(f"  Frame {frame_idx}: Eye distance too small: {eye_distance:.1f}px")
+                                else:
+                                    if frame_idx < 5:
+                                        print(f"  Frame {frame_idx}: Eye landmarks not detected")
 
                                 # Draw key face landmarks
                                 for idx in [1, 33, 263, 61, 291, 152]:
