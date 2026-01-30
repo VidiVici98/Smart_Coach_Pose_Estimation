@@ -60,7 +60,12 @@ OUTPUT_PATH = "data/output/output_full.mp4"
 CSV_PATH    = "data/output/analytics.csv"
 
 # Limit processing to first N frames for testing (set to None to process entire video)
-MAX_FRAMES = 30  # Process only first 30 frames for quick validation
+# Or set SAMPLE_FRAMES to process only specific frames from different points
+MAX_FRAMES = None  # Process entire video
+# Broader sampling across full video duration to capture hands and diverse poses
+# Frame 10: early action, 30: establishing, 60: mid-action, 75: peak, 
+# 100: follow-through, 120: recovery, 140: end sequence
+SAMPLE_FRAMES = [10, 30, 60, 75, 100, 120, 140]  # Broader video coverage for validation
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
@@ -251,10 +256,10 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             return np.array([cos_a * vec[0] - sin_a * vec[1],
                             sin_a * vec[0] + cos_a * vec[1]])
         
-        # Increased visibility: more shells and higher alpha values
-        num_shells = 5  # More shells for smoother gradient
-        edge_alpha = 0.25  # Increased from 0.15 for better visibility
-        center_alpha = 0.6  # Increased from 0.4 for better visibility
+        # Enhanced visibility: more shells and higher alpha values for screenshots
+        num_shells = 7  # More shells for smoother gradient and better visibility
+        edge_alpha = 0.45  # Increased for better visibility in screenshots
+        center_alpha = 0.8  # Increased for better visibility in screenshots
         
         # Draw from outermost to innermost for proper layering
         for shell_idx in range(num_shells - 1, -1, -1):
@@ -600,6 +605,8 @@ FACE_3D_POINTS = np.array([
 # MAIN LOOP
 # -------------------------
 print(f"\nStarting processing: {frame_count} frames at {fps:.2f} FPS")
+if SAMPLE_FRAMES is not None:
+    print(f"SAMPLE MODE: Processing only frames {SAMPLE_FRAMES}")
 print("=" * 60)
 
 # Memory management
@@ -618,6 +625,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         ret, frame = cap.read()
         if not ret:
             break
+        
+        # Skip frames not in SAMPLE_FRAMES if specified
+        if SAMPLE_FRAMES is not None and frame_idx not in SAMPLE_FRAMES:
+            frame_idx += 1
+            continue
         
         # Check if we've reached the max frame limit
         if MAX_FRAMES is not None and frames_processed >= MAX_FRAMES:
@@ -959,10 +971,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                             if frame_idx < 5 or frame_idx % 30 == 0:  # Print for first 5 frames and every 30th frame
                                                 print(f"  Frame {frame_idx}: Gaze detected - origin: {cone_origin.astype(int)}, direction: {gaze_vec}")
                                             
-                                            # Draw cone with radial confidence gradient (center=0.6 alpha, edges=0.25)
+                                            # Draw cone with radial confidence gradient (center=0.7 alpha, edges=0.35)
+                                            # Changed to red for high visibility against all backgrounds
                                             # Body mask clipping shows only external portion
                                             draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=body_mask)
                                         else:
                                             if frame_idx < 5:
                                                 print(f"  Frame {frame_idx}: Cone origin out of bounds: {cone_origin.astype(int)}")

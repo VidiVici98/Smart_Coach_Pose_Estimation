@@ -42,7 +42,10 @@ runs/
 wandb/
 
 # Data: keep data directory structure, ignore large files
-# Model weights are NOT tracked - only directory structure and README
+# Model weights are NOT tracked by git but should persist in codespace
+# Users must download models separately or use download scripts
+data/models/*.pt
+data/models/*.task
 !data/models/.gitkeep
 !data/models/README.md
 
@@ -53,13 +56,11 @@ data/output/*
 !data/output/.gitkeep
 !data/output/README.md
 
-# Media
+# Media files (but allow input video to be tracked)
 *.avi
 *.mov
 *.webm
-
-# MediaPipe / task files (if you want to ignore some, keep models tracked above)
-*.task
+# Note: .mp4 files in data/input/ are tracked for pipeline testing
 
 # Jupyter
 .ipynb_checkpoints
