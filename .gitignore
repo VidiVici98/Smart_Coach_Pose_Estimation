@@ -54,7 +54,6 @@ data/output/*
 !data/output/README.md
 
 # Media
-*.mp4
 *.avi
 *.mov
 *.webm
