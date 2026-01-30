@@ -76,3 +76,4 @@ htmlcov/
 !data/models/.gitkeep
 !data/input/.gitkeep
 !data/output/.gitkeep
+screenshots/
