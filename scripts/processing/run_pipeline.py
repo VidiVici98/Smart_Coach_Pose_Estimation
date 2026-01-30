@@ -137,7 +137,7 @@ HAND_TEMP_ALPHA = 0.7  # Hand smoothing - INCREASED for less lag (70% new, 30% o
 CONF_THRES = 0.2
 
 ALPHA_BODY = 0.35
-ALPHA_CONE = 0.25
+ALPHA_CONE = 0.25  # NOTE: Not used in current draw_cone implementation (uses internal alpha values)
 GAZE_LENGTH = 2000
 GAZE_CONE_H_ANGLE = np.radians(16.0)  # Horizontal half-angle
 GAZE_CONE_V_ANGLE = np.radians(9.0)   # Vertical half-angle
@@ -228,7 +228,11 @@ def draw_mask_overlay(frame, mask):
 
 def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=None):
     """Draw 2D cone showing overall gaze direction with smooth confidence gradient.
-    Draws multiple shells with increasing transparency from center to edge for gradient effect."""
+    Draws multiple shells with increasing transparency from center to edge for gradient effect.
+    
+    FIXED: Previously only rendered outermost shell (causing invisible cones).
+    Now renders all 5 shells with increased alpha values (0.25-0.6) for visibility.
+    """
     try:
         o = origin.astype(np.float32)
         d = unit(direction)
@@ -942,18 +946,32 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                 eye_left = L(33)
                                 eye_right = L(263)
                                 if eye_left is not None and eye_right is not None:
-                                    eye_mid = (eye_left + eye_right) / 2
-                                    # Position cone origin inside head (behind eyes) so cone edges intersect eyes
-                                    cone_origin = eye_mid - gaze_vec * CONE_ORIGIN_OFFSET
-                                    
-                                    # Debug: Print gaze detection status
-                                    if frame_idx < 5 or frame_idx % 30 == 0:  # Print for first 5 frames and every 30th frame
-                                        print(f"  Frame {frame_idx}: Gaze detected - origin: {cone_origin.astype(int)}, direction: {gaze_vec}")
-                                    
-                                    # Draw cone with radial confidence gradient (center=0.6 alpha, edges=0.25)
-                                    # Body mask clipping shows only external portion
-                                    draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                              GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+                                    # Validate eye positions are reasonable
+                                    eye_distance = np.linalg.norm(eye_right - eye_left)
+                                    if eye_distance > 10:  # Minimum eye distance (pixels) for valid detection
+                                        eye_mid = (eye_left + eye_right) / 2
+                                        # Position cone origin inside head (behind eyes) so cone edges intersect eyes
+                                        cone_origin = eye_mid - gaze_vec * CONE_ORIGIN_OFFSET
+                                        
+                                        # Validate cone origin is within reasonable bounds
+                                        if 0 <= cone_origin[0] < w and 0 <= cone_origin[1] < h:
+                                            # Debug: Print gaze detection status
+                                            if frame_idx < 5 or frame_idx % 30 == 0:  # Print for first 5 frames and every 30th frame
+                                                print(f"  Frame {frame_idx}: Gaze detected - origin: {cone_origin.astype(int)}, direction: {gaze_vec}")
+                                            
+                                            # Draw cone with radial confidence gradient (center=0.6 alpha, edges=0.25)
+                                            # Body mask clipping shows only external portion
+                                            draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
+                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+                                        else:
+                                            if frame_idx < 5:
+                                                print(f"  Frame {frame_idx}: Cone origin out of bounds: {cone_origin.astype(int)}")
+                                    else:
+                                        if frame_idx < 5:
+                                            print(f"  Frame {frame_idx}: Eye distance too small: {eye_distance:.1f}px")
+                                else:
+                                    if frame_idx < 5:
+                                        print(f"  Frame {frame_idx}: Eye landmarks not detected")
 
                                 # Draw key face landmarks
                                 for idx in [1, 33, 263, 61, 291, 152]:
