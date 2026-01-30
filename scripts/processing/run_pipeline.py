@@ -190,6 +190,141 @@ def norm(v): return np.linalg.norm(v)+1e-6
 def unit(v): return v/norm(v)
 def lerp(a,b,t): return a*(1-t)+b*t
 
+def estimate_robust_gaze_direction(pts, w, h, shoulder_width):
+    """
+    Robust gaze direction estimation that works for various camera angles.
+    
+    Uses multiple factors:
+    - Eye positions and visibility (frontal vs sideways detection)
+    - Ear positions (profile detection)
+    - Nose position
+    - Shoulder orientation
+    - Hip orientation
+    
+    Returns: (gaze_vec, confidence) where gaze_vec is 2D normalized direction
+    """
+    # Extract keypoints (YOLOv8 COCO format)
+    nose = pts.get(0)  # 0
+    left_eye = pts.get(1)  # 1
+    right_eye = pts.get(2)  # 2
+    left_ear = pts.get(3)  # 3
+    right_ear = pts.get(4)  # 4
+    left_shoulder = pts.get(5)  # 5
+    right_shoulder = pts.get(6)  # 6
+    left_hip = pts.get(11)  # 11
+    right_hip = pts.get(12)  # 12
+    
+    # Need at least nose for any calculation
+    if nose is None:
+        return None, 0.0
+    
+    # === STEP 1: Detect camera angle / person orientation ===
+    # Check eye visibility to determine if frontal or sideways
+    eyes_visible = (left_eye is not None, right_eye is not None)
+    ears_visible = (left_ear is not None, right_ear is not None)
+    
+    # Determine view angle
+    is_frontal = eyes_visible[0] and eyes_visible[1]  # Both eyes visible
+    is_left_profile = eyes_visible[1] and not eyes_visible[0] and ears_visible[0]  # Right eye + left ear
+    is_right_profile = eyes_visible[0] and not eyes_visible[1] and ears_visible[1]  # Left eye + right ear
+    
+    gaze_vec = None
+    confidence = 0.0
+    
+    # === STEP 2: Calculate gaze based on detected angle ===
+    
+    if is_frontal and left_eye is not None and right_eye is not None:
+        # FRONTAL VIEW: Use eye midpoint and body orientation
+        eye_mid = (left_eye + right_eye) / 2
+        
+        # Get body center reference (shoulders or hips)
+        body_mid = None
+        if left_shoulder is not None and right_shoulder is not None:
+            body_mid = (left_shoulder + right_shoulder) / 2
+        elif left_hip is not None and right_hip is not None:
+            body_mid = (left_hip + right_hip) / 2
+        
+        if body_mid is not None:
+            # Head pointing from body center through eye midpoint
+            head_vec = eye_mid - body_mid
+            
+            # Also consider nose position relative to eyes for fine-tuning
+            if nose is not None:
+                # Nose offset from eye midpoint indicates gaze direction
+                nose_offset = nose - eye_mid
+                # Combine: 70% body direction, 30% nose offset
+                head_vec = 0.7 * head_vec + 0.3 * nose_offset
+            
+            gaze_vec = unit(head_vec)
+            confidence = 0.9
+    
+    elif is_left_profile or is_right_profile:
+        # PROFILE/SIDEWAYS VIEW: Use ear-nose-eye alignment
+        
+        if is_left_profile and left_ear is not None and right_eye is not None:
+            # Left profile: facing right in image
+            # Gaze points from ear through nose/eye
+            if nose is not None:
+                gaze_vec = unit(nose - left_ear)
+            else:
+                gaze_vec = unit(right_eye - left_ear)
+            confidence = 0.8
+            
+        elif is_right_profile and right_ear is not None and left_eye is not None:
+            # Right profile: facing left in image
+            # Gaze points from ear through nose/eye
+            if nose is not None:
+                gaze_vec = unit(nose - right_ear)
+            else:
+                gaze_vec = unit(left_eye - right_ear)
+            confidence = 0.8
+    
+    # === STEP 3: Fallback if profile detection didn't work ===
+    if gaze_vec is None:
+        # Use any available reference points
+        
+        # Try eyes (any combination)
+        if left_eye is not None and right_eye is not None:
+            eye_mid = (left_eye + right_eye) / 2
+        elif left_eye is not None:
+            eye_mid = left_eye
+        elif right_eye is not None:
+            eye_mid = right_eye
+        else:
+            eye_mid = None
+        
+        # Try ears (any combination)
+        if left_ear is not None and right_ear is not None:
+            ear_mid = (left_ear + right_ear) / 2
+        elif left_ear is not None:
+            ear_mid = left_ear
+        elif right_ear is not None:
+            ear_mid = right_ear
+        else:
+            ear_mid = None
+        
+        # Calculate gaze from available points
+        if eye_mid is not None and ear_mid is not None:
+            # Eyes are forward of ears, so gaze points from ears to eyes
+            gaze_vec = unit(eye_mid - ear_mid)
+            confidence = 0.6
+        elif nose is not None and ear_mid is not None:
+            # Nose is forward of ears
+            gaze_vec = unit(nose - ear_mid)
+            confidence = 0.5
+        elif nose is not None:
+            # Last resort: use nose-to-shoulders if shoulders visible
+            if left_shoulder is not None and right_shoulder is not None:
+                shoulder_mid = (left_shoulder + right_shoulder) / 2
+                gaze_vec = unit(nose - shoulder_mid)
+                confidence = 0.4
+            elif left_hip is not None and right_hip is not None:
+                hip_mid = (left_hip + right_hip) / 2
+                gaze_vec = unit(nose - hip_mid)
+                confidence = 0.3
+    
+    return gaze_vec, confidence
+
 def calculate_angle(p1, p2, p3):
     """Calculate angle at p2 formed by p1-p2-p3 in degrees."""
     if p1 is None or p2 is None or p3 is None:
@@ -809,11 +944,13 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     prev_index_y[side] = index_y
         # else: hands_detector is None, all hand metrics remain at 0 (initialized above)
 
-        # -------- FACE + SIMPLIFIED GAZE (using pose keypoints + face bbox) --------
+        # -------- FACE + ROBUST MULTI-FACTOR GAZE (works for various camera angles) --------
         row["gaze_dir_x"] = row["gaze_dir_y"] = row["gaze_on_body"] = 0
         
-        # Simplified gaze estimation using YOLO face detection + pose keypoints
-        # Since MediaPipe FaceLandmarker is not working, use simpler method
+        # Use robust gaze estimation that considers:
+        # - Camera angle (frontal vs sideways/profile)
+        # - Multiple keypoints (eyes, ears, nose, shoulders, hips)
+        # - Fallback logic for missing keypoints
         face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
         
         if len(face_results.boxes.xyxy) > 0:
@@ -822,52 +959,43 @@ with SuppressStdErr():  # suppress any backend warnings during loop
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w, x2), min(h, y2)
             
-            # Get face center
+            # Get face center for reference
             face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2], dtype=np.float32)
             
-            # Calculate gaze direction from pose keypoints
-            # Use nose (keypoint 0) and head position to estimate gaze
-            if 0 in pts:  # Nose detected
-                nose = pts[0]
+            # Calculate gaze using robust multi-factor estimation
+            gaze_vec, confidence = estimate_robust_gaze_direction(pts, w, h, shoulder_width)
+            
+            if gaze_vec is not None and confidence > 0.0:
+                # Smooth gaze direction temporally
+                if prev_gaze_vec_2d is not None:
+                    # Adaptive smoothing based on confidence
+                    # Higher confidence = more trust in new value
+                    alpha = 0.2 + (confidence * 0.2)  # 0.2-0.4 range
+                    gaze_vec = unit(lerp(prev_gaze_vec_2d, gaze_vec, alpha))
                 
-                # Calculate head forward vector from nose to face center direction
-                # If nose is visible, use nose-to-shoulders vector
-                if 5 in pts and 6 in pts:
-                    shoulder_mid = (pts[5] + pts[6]) / 2
-                    # Head forward direction: perpendicular to shoulder line, pointing from shoulders to nose
-                    head_vec = nose - shoulder_mid
-                    # Normalize
-                    if np.linalg.norm(head_vec) > 1.0:
-                        head_vec = head_vec / np.linalg.norm(head_vec)
-                        
-                        # Smooth gaze direction
-                        if prev_gaze_vec_2d is not None:
-                            head_vec = unit(lerp(prev_gaze_vec_2d, head_vec, 0.3))  # 30% new, 70% old for smoothing
-                        
-                        prev_gaze_vec_2d = head_vec.copy()
-                        gaze_vec = head_vec
-                        
-                        # Set CSV values
-                        row["gaze_dir_x"] = float(gaze_vec[0])
-                        row["gaze_dir_y"] = float(gaze_vec[1])
-                        
-                        # Calculate cone origin and draw
-                        # Use nose position as cone origin
-                        cone_origin = nose.copy()
-                        
-                        # Validate cone origin is within frame
-                        if 0 <= cone_origin[0] < w and 0 <= cone_origin[1] < h:
-                            # Draw cone with red color for high visibility
-                            draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH,
-                                    GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=None)
-                            
-                            # Draw nose landmark for reference
-                            cv2.circle(frame, tuple(nose.astype(int)), 5, (0, 255, 255), -1)
+                prev_gaze_vec_2d = gaze_vec.copy()
+                
+                # Set CSV values
+                row["gaze_dir_x"] = float(gaze_vec[0])
+                row["gaze_dir_y"] = float(gaze_vec[1])
+                
+                # Calculate cone origin - use nose if available, else face center
+                cone_origin = pts.get(0, face_center)
+                
+                # Validate cone origin is within frame
+                if 0 <= cone_origin[0] < w and 0 <= cone_origin[1] < h:
+                    # Draw cone with red color for high visibility
+                    draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH,
+                            GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=None)
+                    
+                    # Draw nose landmark for reference if available
+                    if 0 in pts:
+                        cv2.circle(frame, tuple(pts[0].astype(int)), 5, (0, 255, 255), -1)
         
-        # Old MediaPipe-based code disabled since FaceLandmarker doesn't work
-        # MediaPipe Tasks API consistently returns empty face_landmarks list
-        # Full model download blocked by Google CDN (403 Forbidden)
-        if False and mp_face is not None:
+        # Old simplified code and MediaPipe-based code disabled
+        # Previous implementation was too simple (only nose-to-shoulders)
+        # and didn't work for sideways/profile views
+        if False:
             face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
 
             if len(face_results.boxes.xyxy) > 0:
