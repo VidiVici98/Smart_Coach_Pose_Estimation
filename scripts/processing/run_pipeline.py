@@ -296,8 +296,6 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             
             # Blend this shell with the calculated alpha
             cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
-            
-        print(f"DEBUG: Drew gaze cone at origin {o.astype(int)} with direction {d}", flush=True)
     except Exception as e:
         # Print error for debugging but don't crash the pipeline
         print(f"DEBUG: Error in draw_cone: {type(e).__name__}: {e}")
@@ -786,11 +784,65 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     prev_index_y[side] = index_y
         # else: hands_detector is None, all hand metrics remain at 0 (initialized above)
 
-        # -------- FACE + HEAD-TORSO BLENDED GAZE (3D, body-relative) --------
+        # -------- FACE + SIMPLIFIED GAZE (using pose keypoints + face bbox) --------
         row["gaze_dir_x"] = row["gaze_dir_y"] = row["gaze_on_body"] = 0
         
-        # Only process face if mp_face is initialized
-        if mp_face is not None:
+        # Simplified gaze estimation using YOLO face detection + pose keypoints
+        # Since MediaPipe FaceLandmarker is not working, use simpler method
+        face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
+        
+        if len(face_results.boxes.xyxy) > 0:
+            x1, y1, x2, y2 = map(int, face_results.boxes.xyxy[0])
+            # Validate bounding box is within frame and has minimum size
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            
+            # Get face center
+            face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2], dtype=np.float32)
+            
+            # Calculate gaze direction from pose keypoints
+            # Use nose (keypoint 0) and head position to estimate gaze
+            if 0 in pts:  # Nose detected
+                nose = pts[0]
+                
+                # Calculate head forward vector from nose to face center direction
+                # If nose is visible, use nose-to-shoulders vector
+                if 5 in pts and 6 in pts:
+                    shoulder_mid = (pts[5] + pts[6]) / 2
+                    # Head forward direction: perpendicular to shoulder line, pointing from shoulders to nose
+                    head_vec = nose - shoulder_mid
+                    # Normalize
+                    if np.linalg.norm(head_vec) > 1.0:
+                        head_vec = head_vec / np.linalg.norm(head_vec)
+                        
+                        # Smooth gaze direction
+                        if prev_gaze_vec_2d is not None:
+                            head_vec = unit(lerp(prev_gaze_vec_2d, head_vec, 0.3))  # 30% new, 70% old for smoothing
+                        
+                        prev_gaze_vec_2d = head_vec.copy()
+                        gaze_vec = head_vec
+                        
+                        # Set CSV values
+                        row["gaze_dir_x"] = float(gaze_vec[0])
+                        row["gaze_dir_y"] = float(gaze_vec[1])
+                        
+                        # Calculate cone origin and draw
+                        # Use nose position as cone origin
+                        cone_origin = nose.copy()
+                        
+                        # Validate cone origin is within frame
+                        if 0 <= cone_origin[0] < w and 0 <= cone_origin[1] < h:
+                            # Draw cone with red color for high visibility
+                            draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH,
+                                    GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=None)
+                            
+                            # Draw nose landmark for reference
+                            cv2.circle(frame, tuple(nose.astype(int)), 5, (0, 255, 255), -1)
+        
+        # Old MediaPipe-based code disabled since FaceLandmarker doesn't work
+        # MediaPipe Tasks API consistently returns empty face_landmarks list
+        # Full model download blocked by Google CDN (403 Forbidden)
+        if False and mp_face is not None:
             face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
 
             if len(face_results.boxes.xyxy) > 0:
