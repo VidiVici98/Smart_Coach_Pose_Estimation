@@ -47,7 +47,6 @@ wandb/
 !data/models/README.md
 
 # Ignore large input and output directories
-data/input/*
 !data/input/.gitkeep
 !data/input/README.md
 data/output/*
