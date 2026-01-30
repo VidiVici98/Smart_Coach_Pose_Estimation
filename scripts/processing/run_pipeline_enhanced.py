@@ -46,6 +46,14 @@ from smart_coach.metrics.advanced_metrics import (
     DrawDetector
 )
 
+# Import firearm detection
+from smart_coach.models.firearm_detector import (
+    FirearmDetector,
+    fuse_firearm_and_arm_estimates,
+    check_muzzle_body_intersection,
+    draw_firearm_detection
+)
+
 # -------------------------
 # CONFIG
 # -------------------------
@@ -56,6 +64,12 @@ CSV_PATH    = "data/output/analytics.csv"
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
 HAND_MODEL_PATH = "data/models/hand_landmarker.task"
+FIREARM_MODEL_PATH = "data/models/yolov8n.pt"  # For firearm/object detection
+
+# Firearm detection configuration
+ENABLE_FIREARM_DETECTION = True  # Set to False to use arm-only fallback
+FIREARM_CONFIDENCE = 0.3
+FIREARM_SMOOTHING = 0.7
 
 # Adjusted TEMP_ALPHA for faster responsiveness
 TEMP_ALPHA = 0.6
@@ -243,6 +257,22 @@ with SuppressStdErr():
     maskrcnn = maskrcnn_resnet50_fpn(weights="DEFAULT")
     maskrcnn.eval()
     
+    # Initialize firearm detector if enabled
+    if ENABLE_FIREARM_DETECTION and os.path.exists(FIREARM_MODEL_PATH):
+        firearm_model = YOLO(FIREARM_MODEL_PATH)
+        firearm_detector = FirearmDetector(
+            model=firearm_model,
+            confidence_threshold=FIREARM_CONFIDENCE,
+            target_classes=['gun', 'handgun', 'pistol', 'firearm', 'weapon', 'rifle'],
+            smoothing_alpha=FIREARM_SMOOTHING
+        )
+        print(f"✓ Firearm detector initialized (confidence={FIREARM_CONFIDENCE})")
+    else:
+        firearm_detector = None
+        if ENABLE_FIREARM_DETECTION:
+            print(f"⚠ Firearm detection enabled but model not found: {FIREARM_MODEL_PATH}")
+            print(f"  Using arm kinematics only")
+    
     # Initialize cache if enabled
     if ENABLE_MASKRCNN_CACHE:
         mask_cache = MaskRCNNCache(cache_frames=MASKRCNN_CACHE_FRAMES)
@@ -330,9 +360,14 @@ csv_fields += ["head_pitch","head_yaw","head_roll"]
 csv_fields += ["L_wrist_elevation","R_wrist_elevation","L_elbow_elevation","R_elbow_elevation"]
 
 # ===== ENHANCED METRICS (NEW) =====
-# Muzzle direction from arm kinematics
-csv_fields += ["L_muzzle_direction_x", "L_muzzle_direction_y", "L_muzzle_elevation",
-               "R_muzzle_direction_x", "R_muzzle_direction_y", "R_muzzle_elevation"]
+# Firearm detection metrics
+csv_fields += ["firearm_detected", "firearm_confidence", "firearm_bbox_x1", "firearm_bbox_y1", 
+               "firearm_bbox_x2", "firearm_bbox_y2", "muzzle_point_x", "muzzle_point_y"]
+# Muzzle direction from hybrid fusion (firearm + arm kinematics)
+csv_fields += ["L_muzzle_direction_x", "L_muzzle_direction_y", "L_muzzle_elevation", "L_muzzle_source",
+               "R_muzzle_direction_x", "R_muzzle_direction_y", "R_muzzle_elevation", "R_muzzle_source"]
+# Safety metrics
+csv_fields += ["muzzle_on_body", "muzzle_body_distance"]
 # Recoil detection
 csv_fields += ["L_recoil_detected", "L_recoil_peak_accel", "L_recoil_recovery_time",
                "R_recoil_detected", "R_recoil_peak_accel", "R_recoil_recovery_time"]
@@ -786,27 +821,88 @@ with SuppressStdErr():  # suppress any backend warnings during loop
             row["R_elbow_elevation"] = 0.0
         
         # -------- ENHANCED METRICS (NEW) --------
-        # Muzzle direction from arm kinematics
+        
+        # Firearm detection (once per frame, not per side)
+        firearm_detection = None
+        if firearm_detector is not None:
+            firearm_detection = firearm_detector.detect(frame)
+        
+        # Populate firearm detection metrics
+        if firearm_detection is not None:
+            row["firearm_detected"] = 1
+            row["firearm_confidence"] = float(firearm_detection.confidence)
+            row["firearm_bbox_x1"] = float(firearm_detection.bbox[0])
+            row["firearm_bbox_y1"] = float(firearm_detection.bbox[1])
+            row["firearm_bbox_x2"] = float(firearm_detection.bbox[2])
+            row["firearm_bbox_y2"] = float(firearm_detection.bbox[3])
+            if firearm_detection.muzzle_point is not None:
+                row["muzzle_point_x"] = float(firearm_detection.muzzle_point[0])
+                row["muzzle_point_y"] = float(firearm_detection.muzzle_point[1])
+            else:
+                row["muzzle_point_x"] = 0.0
+                row["muzzle_point_y"] = 0.0
+        else:
+            row["firearm_detected"] = 0
+            row["firearm_confidence"] = 0.0
+            row["firearm_bbox_x1"] = 0.0
+            row["firearm_bbox_y1"] = 0.0
+            row["firearm_bbox_x2"] = 0.0
+            row["firearm_bbox_y2"] = 0.0
+            row["muzzle_point_x"] = 0.0
+            row["muzzle_point_y"] = 0.0
+        
+        # Get firearm muzzle direction if available
+        firearm_direction = None
+        if firearm_detector is not None and firearm_detection is not None:
+            firearm_direction = firearm_detector.get_muzzle_direction_vector(firearm_detection)
+        
+        # Muzzle direction - hybrid fusion of firearm detection + arm kinematics
         for side, wrist_idx, elbow_idx, shoulder_idx in [
             ('L', 9, 7, 5),
             ('R', 10, 8, 6)
         ]:
+            # Calculate arm-based estimate
+            arm_direction = None
             if wrist_idx in pts and elbow_idx in pts and shoulder_idx in pts:
-                muzzle_vec = calculate_muzzle_vector_from_arms(
+                arm_direction = calculate_muzzle_vector_from_arms(
                     pts[wrist_idx], pts[elbow_idx], pts[shoulder_idx]
                 )
-                if muzzle_vec is not None:
-                    row[f"{side}_muzzle_direction_x"] = float(muzzle_vec[0])
-                    row[f"{side}_muzzle_direction_y"] = float(muzzle_vec[1])
-                    row[f"{side}_muzzle_elevation"] = calculate_muzzle_elevation(muzzle_vec)
-                else:
-                    row[f"{side}_muzzle_direction_x"] = 0.0
-                    row[f"{side}_muzzle_direction_y"] = 0.0
-                    row[f"{side}_muzzle_elevation"] = 0.0
+            
+            # Fuse firearm detection with arm kinematics
+            firearm_conf = firearm_detection.confidence if firearm_detection else 0.0
+            muzzle_vec, source = fuse_firearm_and_arm_estimates(
+                firearm_direction, arm_direction, firearm_conf
+            )
+            
+            if muzzle_vec is not None:
+                row[f"{side}_muzzle_direction_x"] = float(muzzle_vec[0])
+                row[f"{side}_muzzle_direction_y"] = float(muzzle_vec[1])
+                row[f"{side}_muzzle_elevation"] = calculate_muzzle_elevation(muzzle_vec)
+                row[f"{side}_muzzle_source"] = source
             else:
                 row[f"{side}_muzzle_direction_x"] = 0.0
                 row[f"{side}_muzzle_direction_y"] = 0.0
                 row[f"{side}_muzzle_elevation"] = 0.0
+                row[f"{side}_muzzle_source"] = 'none'
+        
+        # Safety checking - muzzle-body intersection
+        # Use primary hand (right for most people) muzzle direction
+        primary_muzzle_vec = None
+        if row["R_muzzle_direction_x"] != 0.0 or row["R_muzzle_direction_y"] != 0.0:
+            primary_muzzle_vec = np.array([row["R_muzzle_direction_x"], row["R_muzzle_direction_y"]])
+        
+        if primary_muzzle_vec is not None and firearm_detection is not None and firearm_detection.muzzle_point is not None and body_mask_np is not None:
+            intersects, distance = check_muzzle_body_intersection(
+                firearm_detection.muzzle_point,
+                primary_muzzle_vec,
+                body_mask_np,
+                ray_length=200
+            )
+            row["muzzle_on_body"] = int(intersects)
+            row["muzzle_body_distance"] = float(distance)
+        else:
+            row["muzzle_on_body"] = 0
+            row["muzzle_body_distance"] = 0.0
         
         # Recoil detection
         for side, wrist_idx, detector in [
@@ -832,6 +928,10 @@ with SuppressStdErr():  # suppress any backend warnings during loop
             draw_metrics = detector.update(arm_ext, frame_idx)
             row[f"{side}_draw_detected"] = int(draw_metrics['draw_detected'])
             row[f"{side}_draw_time"] = int(draw_metrics['draw_time_frames'])
+        
+        # -------- FIREARM DETECTION VISUALIZATION --------
+        if firearm_detection is not None:
+            frame = draw_firearm_detection(frame, firearm_detection, color=(0, 255, 255), thickness=2)
         
         # -------- WRITE --------
         csvwriter.writerow(row)
