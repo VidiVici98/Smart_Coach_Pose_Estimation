@@ -69,6 +69,7 @@ SAMPLE_FRAMES = [10, 30, 60, 75, 100, 120, 140]  # Broader video coverage for va
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
+OBJECT_MODEL_PATH = "data/models/yolov8n.pt"  # For object/muzzle detection
 HAND_MODEL_PATH = "data/models/hand_landmarker.task"
 FACE_LANDMARKER_PATH = "data/models/face_landmarker.task"  # For MediaPipe Tasks API
 
@@ -78,6 +79,7 @@ model_validation_failed = False
 for model_name, model_path, expected_min_mb, expected_max_mb, is_optional in [
     ("YOLOv8 Pose", POSE_MODEL_PATH, 40, 60, False),
     ("YOLOv8 Face", FACE_MODEL_PATH, 5, 10, False),
+    ("YOLOv8 Object", OBJECT_MODEL_PATH, 5, 10, True),  # For muzzle detection
     ("Hand Landmarker", HAND_MODEL_PATH, 0.2, 30, True),  # Accept lightweight (0.3MB) or full (26MB) versions
     ("Face Landmarker", FACE_LANDMARKER_PATH, 3.0, 30, True)  # Accept lightweight (3.6MB) or full (26MB) versions
 ]:
@@ -147,6 +149,12 @@ GAZE_LENGTH = 2000
 GAZE_CONE_H_ANGLE = np.radians(16.0)  # Horizontal half-angle
 GAZE_CONE_V_ANGLE = np.radians(9.0)   # Vertical half-angle
 CONE_ORIGIN_OFFSET = 40  # Distance behind eyes to place cone origin (in pixels)
+
+# Muzzle cone configuration (narrower and longer for precision)
+MUZZLE_LENGTH = 3000  # Longer cone to show aim trajectory
+MUZZLE_CONE_H_ANGLE = np.radians(4.0)  # Much narrower horizontal angle (4 degrees)
+MUZZLE_CONE_V_ANGLE = np.radians(4.0)  # Much narrower vertical angle (4 degrees)
+
 MAX_GAZE_ROT = 0.12  # rad/frame
 GAZE_BUFFER_LEN = 9   # Increased for stronger median filtering
 TORSO_BLEND = 0.25    # Reduced: more head-based for precision, less torso
@@ -181,6 +189,141 @@ HAND_CONNECTIONS = [
 def norm(v): return np.linalg.norm(v)+1e-6
 def unit(v): return v/norm(v)
 def lerp(a,b,t): return a*(1-t)+b*t
+
+def estimate_robust_gaze_direction(pts, w, h, shoulder_width):
+    """
+    Robust gaze direction estimation that works for various camera angles.
+    
+    Uses multiple factors:
+    - Eye positions and visibility (frontal vs sideways detection)
+    - Ear positions (profile detection)
+    - Nose position
+    - Shoulder orientation
+    - Hip orientation
+    
+    Returns: (gaze_vec, confidence) where gaze_vec is 2D normalized direction
+    """
+    # Extract keypoints (YOLOv8 COCO format)
+    nose = pts.get(0)  # 0
+    left_eye = pts.get(1)  # 1
+    right_eye = pts.get(2)  # 2
+    left_ear = pts.get(3)  # 3
+    right_ear = pts.get(4)  # 4
+    left_shoulder = pts.get(5)  # 5
+    right_shoulder = pts.get(6)  # 6
+    left_hip = pts.get(11)  # 11
+    right_hip = pts.get(12)  # 12
+    
+    # Need at least nose for any calculation
+    if nose is None:
+        return None, 0.0
+    
+    # === STEP 1: Detect camera angle / person orientation ===
+    # Check eye visibility to determine if frontal or sideways
+    eyes_visible = (left_eye is not None, right_eye is not None)
+    ears_visible = (left_ear is not None, right_ear is not None)
+    
+    # Determine view angle
+    is_frontal = eyes_visible[0] and eyes_visible[1]  # Both eyes visible
+    is_left_profile = eyes_visible[1] and not eyes_visible[0] and ears_visible[0]  # Right eye + left ear
+    is_right_profile = eyes_visible[0] and not eyes_visible[1] and ears_visible[1]  # Left eye + right ear
+    
+    gaze_vec = None
+    confidence = 0.0
+    
+    # === STEP 2: Calculate gaze based on detected angle ===
+    
+    if is_frontal and left_eye is not None and right_eye is not None:
+        # FRONTAL VIEW: Use eye midpoint and body orientation
+        eye_mid = (left_eye + right_eye) / 2
+        
+        # Get body center reference (shoulders or hips)
+        body_mid = None
+        if left_shoulder is not None and right_shoulder is not None:
+            body_mid = (left_shoulder + right_shoulder) / 2
+        elif left_hip is not None and right_hip is not None:
+            body_mid = (left_hip + right_hip) / 2
+        
+        if body_mid is not None:
+            # Head pointing from body center through eye midpoint
+            head_vec = eye_mid - body_mid
+            
+            # Also consider nose position relative to eyes for fine-tuning
+            if nose is not None:
+                # Nose offset from eye midpoint indicates gaze direction
+                nose_offset = nose - eye_mid
+                # Combine: 70% body direction, 30% nose offset
+                head_vec = 0.7 * head_vec + 0.3 * nose_offset
+            
+            gaze_vec = unit(head_vec)
+            confidence = 0.9
+    
+    elif is_left_profile or is_right_profile:
+        # PROFILE/SIDEWAYS VIEW: Use ear-nose-eye alignment
+        
+        if is_left_profile and left_ear is not None and right_eye is not None:
+            # Left profile: facing right in image
+            # Gaze points from ear through nose/eye
+            if nose is not None:
+                gaze_vec = unit(nose - left_ear)
+            else:
+                gaze_vec = unit(right_eye - left_ear)
+            confidence = 0.8
+            
+        elif is_right_profile and right_ear is not None and left_eye is not None:
+            # Right profile: facing left in image
+            # Gaze points from ear through nose/eye
+            if nose is not None:
+                gaze_vec = unit(nose - right_ear)
+            else:
+                gaze_vec = unit(left_eye - right_ear)
+            confidence = 0.8
+    
+    # === STEP 3: Fallback if profile detection didn't work ===
+    if gaze_vec is None:
+        # Use any available reference points
+        
+        # Try eyes (any combination)
+        if left_eye is not None and right_eye is not None:
+            eye_mid = (left_eye + right_eye) / 2
+        elif left_eye is not None:
+            eye_mid = left_eye
+        elif right_eye is not None:
+            eye_mid = right_eye
+        else:
+            eye_mid = None
+        
+        # Try ears (any combination)
+        if left_ear is not None and right_ear is not None:
+            ear_mid = (left_ear + right_ear) / 2
+        elif left_ear is not None:
+            ear_mid = left_ear
+        elif right_ear is not None:
+            ear_mid = right_ear
+        else:
+            ear_mid = None
+        
+        # Calculate gaze from available points
+        if eye_mid is not None and ear_mid is not None:
+            # Eyes are forward of ears, so gaze points from ears to eyes
+            gaze_vec = unit(eye_mid - ear_mid)
+            confidence = 0.6
+        elif nose is not None and ear_mid is not None:
+            # Nose is forward of ears
+            gaze_vec = unit(nose - ear_mid)
+            confidence = 0.5
+        elif nose is not None:
+            # Last resort: use nose-to-shoulders if shoulders visible
+            if left_shoulder is not None and right_shoulder is not None:
+                shoulder_mid = (left_shoulder + right_shoulder) / 2
+                gaze_vec = unit(nose - shoulder_mid)
+                confidence = 0.4
+            elif left_hip is not None and right_hip is not None:
+                hip_mid = (left_hip + right_hip) / 2
+                gaze_vec = unit(nose - hip_mid)
+                confidence = 0.3
+    
+    return gaze_vec, confidence
 
 def calculate_angle(p1, p2, p3):
     """Calculate angle at p2 formed by p1-p2-p3 in degrees."""
@@ -296,8 +439,6 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             
             # Blend this shell with the calculated alpha
             cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
-            
-        print(f"DEBUG: Drew gaze cone at origin {o.astype(int)} with direction {d}")
     except Exception as e:
         # Print error for debugging but don't crash the pipeline
         print(f"DEBUG: Error in draw_cone: {type(e).__name__}: {e}")
@@ -346,6 +487,15 @@ with SuppressStdErr():
     print("  - Loading YOLOv8 Face model...", flush=True)
     face_model = YOLO(FACE_MODEL_PATH)
     print("    ✓ Face model loaded", flush=True)
+    
+    # Load object detection model for muzzle/firearm detection
+    object_model = None
+    if os.path.exists(OBJECT_MODEL_PATH):
+        print("  - Loading YOLOv8 Object Detection model for muzzle tracking...", flush=True)
+        object_model = YOLO(OBJECT_MODEL_PATH)
+        print("    ✓ Object detection model loaded", flush=True)
+    else:
+        print("  - Object detection model not found (muzzle tracking disabled)", flush=True)
     
     # Mask R-CNN is very memory-intensive (~2GB+ RAM)
     # Only load if LOW_MEMORY_MODE is disabled
@@ -401,6 +551,10 @@ if maskrcnn is not None:
     print(f"✓ Body Segmentation: ENABLED (Mask R-CNN)")
 else:
     print(f"⚠ Body Segmentation: DISABLED (LOW_MEMORY_MODE=True)")
+if object_model is not None:
+    print(f"✓ Muzzle Detection: ENABLED (for aim tracking & safety)")
+else:
+    print(f"⚠ Muzzle Detection: DISABLED (model not available)")
 print(f"  Face Detection: Checking...")
 print()
 
@@ -454,9 +608,9 @@ if mp_face is None and os.path.exists(FACE_LANDMARKER_PATH):
             base_options=python.BaseOptions(model_asset_path=FACE_LANDMARKER_PATH),
             running_mode=VisionRunningMode.IMAGE,  # IMAGE mode is more stable than VIDEO
             num_faces=1,
-            min_face_detection_confidence=0.5,
-            min_face_presence_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_face_detection_confidence=0.3,  # Lowered from 0.5
+            min_face_presence_confidence=0.3,   # Lowered from 0.5
+            min_tracking_confidence=0.3         # Lowered from 0.5
         )
         
         print("    Creating FaceLandmarker...", flush=True)
@@ -550,6 +704,9 @@ for side in ["L","R"]:
 # Gaze metrics
 csv_fields += ["gaze_dir_x","gaze_dir_y","gaze_on_body"]
 
+# Muzzle/firearm metrics (for aim tracking and safety analysis)
+csv_fields += ["muzzle_detected","muzzle_x","muzzle_y","muzzle_dir_x","muzzle_dir_y"]
+
 # Joint angles (in degrees)
 csv_fields += ["L_elbow_angle","R_elbow_angle","L_shoulder_angle","R_shoulder_angle",
                "L_hip_angle","R_hip_angle","L_knee_angle","R_knee_angle"]
@@ -585,6 +742,7 @@ prev_torso_forward_3d = None  # For smoothing torso vector to reduce arm artifac
 forward_buffer = []
 prev_gaze_vec_2d = None  # For 2D outlier rejection
 prev_arm_spread = {"L": None, "R": None}  # Track wrist-to-shoulder distance per side
+prev_muzzle_dir = None  # For smoothing muzzle direction
 frame_idx = 0
 start_time = time.time()
 video_start_time = 0.0  # Will be set from video
@@ -786,14 +944,62 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     prev_index_y[side] = index_y
         # else: hands_detector is None, all hand metrics remain at 0 (initialized above)
 
-        # -------- FACE + HEAD-TORSO BLENDED GAZE (3D, body-relative) --------
+        # -------- FACE + ROBUST MULTI-FACTOR GAZE (works for various camera angles) --------
         row["gaze_dir_x"] = row["gaze_dir_y"] = row["gaze_on_body"] = 0
         
-        # Only process face if mp_face is initialized
-        if mp_face is not None:
+        # Use robust gaze estimation that considers:
+        # - Camera angle (frontal vs sideways/profile)
+        # - Multiple keypoints (eyes, ears, nose, shoulders, hips)
+        # - Fallback logic for missing keypoints
+        face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
+        
+        if len(face_results.boxes.xyxy) > 0:
+            x1, y1, x2, y2 = map(int, face_results.boxes.xyxy[0])
+            # Validate bounding box is within frame and has minimum size
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            
+            # Get face center for reference
+            face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2], dtype=np.float32)
+            
+            # Calculate gaze using robust multi-factor estimation
+            gaze_vec, confidence = estimate_robust_gaze_direction(pts, w, h, shoulder_width)
+            
+            if gaze_vec is not None and confidence > 0.0:
+                # Smooth gaze direction temporally
+                if prev_gaze_vec_2d is not None:
+                    # Adaptive smoothing based on confidence
+                    # Higher confidence = more trust in new value
+                    alpha = 0.2 + (confidence * 0.2)  # 0.2-0.4 range
+                    gaze_vec = unit(lerp(prev_gaze_vec_2d, gaze_vec, alpha))
+                
+                prev_gaze_vec_2d = gaze_vec.copy()
+                
+                # Set CSV values
+                row["gaze_dir_x"] = float(gaze_vec[0])
+                row["gaze_dir_y"] = float(gaze_vec[1])
+                
+                # Calculate cone origin - use nose if available, else face center
+                cone_origin = pts.get(0, face_center)
+                
+                # Validate cone origin is within frame
+                if 0 <= cone_origin[0] < w and 0 <= cone_origin[1] < h:
+                    # Draw cone with red color for high visibility
+                    draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH,
+                            GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=None)
+                    
+                    # Draw nose landmark for reference if available
+                    if 0 in pts:
+                        cv2.circle(frame, tuple(pts[0].astype(int)), 5, (0, 255, 255), -1)
+        
+        # Old simplified code and MediaPipe-based code disabled
+        # Previous implementation was too simple (only nose-to-shoulders)
+        # and didn't work for sideways/profile views
+        if False:
             face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
 
             if len(face_results.boxes.xyxy) > 0:
+                print(f"  Frame {frame_idx}: Face bbox detected", flush=True)
                 x1, y1, x2, y2 = map(int, face_results.boxes.xyxy[0])
                 # Validate bounding box is within frame and has minimum size
                 x1, y1 = max(0, x1), max(0, y1)
@@ -801,37 +1007,67 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                 
                 # Ensure face crop has minimum dimensions (20x20 pixels)
                 if (x2 - x1) >= 20 and (y2 - y1) >= 20:
-                    face_crop = rgb[y1:y2, x1:x2]
+                    print(f"  Frame {frame_idx}: Face bbox {x2-x1}x{y2-y1} at ({x1},{y1})-({x2},{y2})", flush=True)
+                    
+                    # For Tasks API, we should pass the FULL frame, not a crop
+                    # The FaceLandmarker does its own face detection internally
                     mp_results = None
                     
                     try:
                         if face_api_type == 'solutions':
-                            # Solutions API (legacy)
+                            # Solutions API (legacy) - works with face crop
+                            face_crop = rgb[y1:y2, x1:x2]
                             mp_results = mp_face.process(face_crop)
                             has_landmarks = mp_results and mp_results.multi_face_landmarks
                             
                         elif face_api_type == 'tasks':
-                            # Tasks API (modern) - using IMAGE mode (more stable)
-                            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_crop)
-                            mp_results = mp_face.detect(mp_image)  # IMAGE mode uses detect() not detect_for_video()
-                            has_landmarks = mp_results and mp_results.face_landmarks
+                            # Tasks API (modern) - use FULL frame, not crop
+                            # FaceLandmarker does its own face detection
+                            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                            mp_results = mp_face.detect(mp_image)
+                            
+                            # Debug: Save first frame for inspection
+                            if frame_idx == 10:
+                                import cv2 as cv2_debug
+                                cv2_debug.imwrite('/tmp/debug_frame_10.jpg', frame)
+                                print(f"  DEBUG: Saved /tmp/debug_frame_10.jpg for inspection", flush=True)
+                            
+                            # Check if we got any face landmarks
+                            has_landmarks = (mp_results and 
+                                           mp_results.face_landmarks and 
+                                           len(mp_results.face_landmarks) > 0)
+                            print(f"  Frame {frame_idx}: MediaPipe found {len(mp_results.face_landmarks) if mp_results and mp_results.face_landmarks else 0} faces", flush=True)
+                            
+                            # Debug: print more info
+                            if mp_results:
+                                print(f"  Frame {frame_idx}: mp_results exists, face_landmarks={mp_results.face_landmarks}", flush=True)
+                        
+                        print(f"  Frame {frame_idx}: has_landmarks={has_landmarks}", flush=True)
                             
                     except Exception as e:
                         # Skip face processing on error but continue pipeline
                         has_landmarks = False
+                        print(f"  Frame {frame_idx}: MediaPipe error: {e}", flush=True)
 
                     if has_landmarks:
+                        print(f"  Frame {frame_idx}: Processing face landmarks", flush=True)
                         # Extract landmarks based on API type
                         if face_api_type == 'solutions':
                             lm = mp_results.multi_face_landmarks[0].landmark
+                            # For Solutions API, coordinates are relative to face crop
+                            def L(i):
+                                lm_i = lm[i]
+                                # Convert normalized coordinates to frame coordinates
+                                return np.array([lm_i.x * (x2 - x1) + x1,
+                                                 lm_i.y * (y2 - y1) + y1], dtype=np.float32)
                         else:  # tasks
                             lm = mp_results.face_landmarks[0]
-
-                        def L(i):
-                            lm_i = lm[i]
-                            # Convert normalized coordinates to frame coordinates
-                            return np.array([lm_i.x * (x2 - x1) + x1,
-                                             lm_i.y * (y2 - y1) + y1], dtype=np.float32)
+                            # For Tasks API, coordinates are relative to full frame
+                            def L(i):
+                                lm_i = lm[i]
+                                # Convert normalized coordinates to frame coordinates
+                                return np.array([lm_i.x * w,
+                                                 lm_i.y * h], dtype=np.float32)
 
                         # Build points, filter Nones
                         image_points, model_points_filtered = [], []
@@ -844,6 +1080,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                         model_points_filtered = np.array(model_points_filtered, dtype=np.float32)
 
                         if len(image_points) >= 4:  # Need at least 4 points for solvePnP
+                            print(f"  Frame {frame_idx}: Got {len(image_points)} image points for solvePnP", flush=True)
                             # Use robust focal length estimation: average of width and height
                             # This adapts better to different aspect ratios and camera angles
                             focal_length = (w + h) / 2.0
@@ -858,6 +1095,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                             )
 
                             if success:
+                                print(f"  Frame {frame_idx}: solvePnP successful", flush=True)
                                 rot_mat, _ = cv2.Rodrigues(rotation_vector)
                                 head_forward = rot_mat[:, 2].copy()
 
@@ -973,18 +1211,16 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                             
                                             # Draw cone with radial confidence gradient (center=0.7 alpha, edges=0.35)
                                             # Changed to red for high visibility against all backgrounds
-                                            # Body mask clipping shows only external portion
+                                            # Draw without body mask clipping so gaze cone is fully visible
                                             draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=body_mask)
+                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=None)
                                         else:
                                             if frame_idx < 5:
                                                 print(f"  Frame {frame_idx}: Cone origin out of bounds: {cone_origin.astype(int)}")
                                     else:
-                                        if frame_idx < 5:
-                                            print(f"  Frame {frame_idx}: Eye distance too small: {eye_distance:.1f}px")
+                                        print(f"  Frame {frame_idx}: Eye distance too small: {eye_distance:.1f}px", flush=True)
                                 else:
-                                    if frame_idx < 5:
-                                        print(f"  Frame {frame_idx}: Eye landmarks not detected")
+                                    print(f"  Frame {frame_idx}: Eye landmarks not detected (eye_left={eye_left is not None}, eye_right={eye_right is not None})", flush=True)
 
                                 # Draw key face landmarks
                                 for idx in [1, 33, 263, 61, 291, 152]:
@@ -1000,6 +1236,102 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                         if 0 <= p[0] < w and 0 <= p[1] < h and body_mask[p[1], p[0]]:
                                             row["gaze_on_body"] = 1
                                             break
+        
+        # -------- MUZZLE/FIREARM DETECTION (for aim tracking and safety) --------
+        row["muzzle_detected"] = row["muzzle_x"] = row["muzzle_y"] = 0
+        row["muzzle_dir_x"] = row["muzzle_dir_y"] = 0.0
+        
+        if object_model is not None:
+            # Detect objects in frame (looking for firearms, sports equipment, etc.)
+            obj_results = object_model(frame, conf=CONF_THRES, max_det=5)[0]
+            
+            # Look for objects that could be firearms or held items
+            # YOLOv8 COCO classes: 0=person, 39=bottle, 40=wine glass, 41=cup, etc.
+            # We'll use hand positions to identify held objects
+            if len(obj_results.boxes.xyxy) > 0 and (9 in pts or 10 in pts):  # If wrists detected
+                # Find object closest to hands (likely held item)
+                best_obj_idx = -1
+                min_dist = float('inf')
+                
+                for obj_idx, (box, conf, cls) in enumerate(zip(obj_results.boxes.xyxy, 
+                                                                obj_results.boxes.conf,
+                                                                obj_results.boxes.cls)):
+                    x1, y1, x2, y2 = box.cpu().numpy()
+                    obj_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+                    
+                    # Calculate distance to hands
+                    for wrist_idx in [9, 10]:  # Left and right wrists
+                        if wrist_idx in pts:
+                            dist = np.linalg.norm(obj_center - pts[wrist_idx])
+                            if dist < min_dist:
+                                min_dist = dist
+                                best_obj_idx = obj_idx
+                
+                # If we found an object near hands (within reasonable distance)
+                if best_obj_idx >= 0 and min_dist < shoulder_width * 3:  # Within 3x shoulder width
+                    x1, y1, x2, y2 = obj_results.boxes.xyxy[best_obj_idx].cpu().numpy()
+                    
+                    # Calculate muzzle position (end of object farthest from hands)
+                    # Approximate muzzle as the end of bbox farthest from wrist positions
+                    obj_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+                    
+                    # Get hand center
+                    hand_positions = []
+                    if 9 in pts:
+                        hand_positions.append(pts[9])
+                    if 10 in pts:
+                        hand_positions.append(pts[10])
+                    
+                    if len(hand_positions) > 0:
+                        hand_center = np.mean(hand_positions, axis=0)
+                        
+                        # Calculate direction from hand to object center
+                        hand_to_obj = obj_center - hand_center
+                        if np.linalg.norm(hand_to_obj) > 1.0:
+                            hand_to_obj = hand_to_obj / np.linalg.norm(hand_to_obj)
+                            
+                            # Muzzle is at the far end of the object in the direction away from hands
+                            # Use bbox corners to find farthest point
+                            corners = np.array([
+                                [x1, y1], [x2, y1], [x1, y2], [x2, y2]
+                            ])
+                            
+                            # Find corner farthest from hand center
+                            distances = [np.linalg.norm(corner - hand_center) for corner in corners]
+                            farthest_idx = np.argmax(distances)
+                            muzzle_pos = corners[farthest_idx]
+                            
+                            # Calculate muzzle direction (from hand center through muzzle)
+                            muzzle_dir = muzzle_pos - hand_center
+                            if np.linalg.norm(muzzle_dir) > 1.0:
+                                muzzle_dir = muzzle_dir / np.linalg.norm(muzzle_dir)
+                                
+                                # Smooth muzzle direction over time
+                                if prev_muzzle_dir is not None:
+                                    muzzle_dir = unit(lerp(prev_muzzle_dir, muzzle_dir, 0.3))
+                                
+                                prev_muzzle_dir = muzzle_dir.copy()
+                                
+                                # Set CSV values
+                                row["muzzle_detected"] = 1
+                                row["muzzle_x"] = float(muzzle_pos[0])
+                                row["muzzle_y"] = float(muzzle_pos[1])
+                                row["muzzle_dir_x"] = float(muzzle_dir[0])
+                                row["muzzle_dir_y"] = float(muzzle_dir[1])
+                                
+                                # Draw muzzle cone (cyan/blue for distinction from red gaze cone)
+                                if 0 <= muzzle_pos[0] < w and 0 <= muzzle_pos[1] < h:
+                                    # Draw narrow, long cone for aim trajectory
+                                    draw_cone(frame, muzzle_pos, muzzle_dir, MUZZLE_LENGTH,
+                                            MUZZLE_CONE_H_ANGLE, MUZZLE_CONE_V_ANGLE, 
+                                            (255, 128, 0), mask=None)  # Cyan/light blue color
+                                    
+                                    # Draw muzzle point marker
+                                    cv2.circle(frame, tuple(muzzle_pos.astype(int)), 7, (255, 255, 0), -1)
+                                    
+                                    # Draw line from hand to muzzle for clarity
+                                    cv2.line(frame, tuple(hand_center.astype(int)), 
+                                           tuple(muzzle_pos.astype(int)), (255, 128, 0), 2)
         
         # -------- CALCULATE ADDITIONAL METRICS --------
         # Joint angles
