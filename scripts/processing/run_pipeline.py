@@ -69,6 +69,7 @@ SAMPLE_FRAMES = [10, 30, 60, 75, 100, 120, 140]  # Broader video coverage for va
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
+OBJECT_MODEL_PATH = "data/models/yolov8n.pt"  # For object/muzzle detection
 HAND_MODEL_PATH = "data/models/hand_landmarker.task"
 FACE_LANDMARKER_PATH = "data/models/face_landmarker.task"  # For MediaPipe Tasks API
 
@@ -78,6 +79,7 @@ model_validation_failed = False
 for model_name, model_path, expected_min_mb, expected_max_mb, is_optional in [
     ("YOLOv8 Pose", POSE_MODEL_PATH, 40, 60, False),
     ("YOLOv8 Face", FACE_MODEL_PATH, 5, 10, False),
+    ("YOLOv8 Object", OBJECT_MODEL_PATH, 5, 10, True),  # For muzzle detection
     ("Hand Landmarker", HAND_MODEL_PATH, 0.2, 30, True),  # Accept lightweight (0.3MB) or full (26MB) versions
     ("Face Landmarker", FACE_LANDMARKER_PATH, 3.0, 30, True)  # Accept lightweight (3.6MB) or full (26MB) versions
 ]:
@@ -147,6 +149,12 @@ GAZE_LENGTH = 2000
 GAZE_CONE_H_ANGLE = np.radians(16.0)  # Horizontal half-angle
 GAZE_CONE_V_ANGLE = np.radians(9.0)   # Vertical half-angle
 CONE_ORIGIN_OFFSET = 40  # Distance behind eyes to place cone origin (in pixels)
+
+# Muzzle cone configuration (narrower and longer for precision)
+MUZZLE_LENGTH = 3000  # Longer cone to show aim trajectory
+MUZZLE_CONE_H_ANGLE = np.radians(4.0)  # Much narrower horizontal angle (4 degrees)
+MUZZLE_CONE_V_ANGLE = np.radians(4.0)  # Much narrower vertical angle (4 degrees)
+
 MAX_GAZE_ROT = 0.12  # rad/frame
 GAZE_BUFFER_LEN = 9   # Increased for stronger median filtering
 TORSO_BLEND = 0.25    # Reduced: more head-based for precision, less torso
@@ -345,6 +353,15 @@ with SuppressStdErr():
     face_model = YOLO(FACE_MODEL_PATH)
     print("    ✓ Face model loaded", flush=True)
     
+    # Load object detection model for muzzle/firearm detection
+    object_model = None
+    if os.path.exists(OBJECT_MODEL_PATH):
+        print("  - Loading YOLOv8 Object Detection model for muzzle tracking...", flush=True)
+        object_model = YOLO(OBJECT_MODEL_PATH)
+        print("    ✓ Object detection model loaded", flush=True)
+    else:
+        print("  - Object detection model not found (muzzle tracking disabled)", flush=True)
+    
     # Mask R-CNN is very memory-intensive (~2GB+ RAM)
     # Only load if LOW_MEMORY_MODE is disabled
     if not LOW_MEMORY_MODE:
@@ -399,6 +416,10 @@ if maskrcnn is not None:
     print(f"✓ Body Segmentation: ENABLED (Mask R-CNN)")
 else:
     print(f"⚠ Body Segmentation: DISABLED (LOW_MEMORY_MODE=True)")
+if object_model is not None:
+    print(f"✓ Muzzle Detection: ENABLED (for aim tracking & safety)")
+else:
+    print(f"⚠ Muzzle Detection: DISABLED (model not available)")
 print(f"  Face Detection: Checking...")
 print()
 
@@ -548,6 +569,9 @@ for side in ["L","R"]:
 # Gaze metrics
 csv_fields += ["gaze_dir_x","gaze_dir_y","gaze_on_body"]
 
+# Muzzle/firearm metrics (for aim tracking and safety analysis)
+csv_fields += ["muzzle_detected","muzzle_x","muzzle_y","muzzle_dir_x","muzzle_dir_y"]
+
 # Joint angles (in degrees)
 csv_fields += ["L_elbow_angle","R_elbow_angle","L_shoulder_angle","R_shoulder_angle",
                "L_hip_angle","R_hip_angle","L_knee_angle","R_knee_angle"]
@@ -583,6 +607,7 @@ prev_torso_forward_3d = None  # For smoothing torso vector to reduce arm artifac
 forward_buffer = []
 prev_gaze_vec_2d = None  # For 2D outlier rejection
 prev_arm_spread = {"L": None, "R": None}  # Track wrist-to-shoulder distance per side
+prev_muzzle_dir = None  # For smoothing muzzle direction
 frame_idx = 0
 start_time = time.time()
 video_start_time = 0.0  # Will be set from video
@@ -1083,6 +1108,102 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                         if 0 <= p[0] < w and 0 <= p[1] < h and body_mask[p[1], p[0]]:
                                             row["gaze_on_body"] = 1
                                             break
+        
+        # -------- MUZZLE/FIREARM DETECTION (for aim tracking and safety) --------
+        row["muzzle_detected"] = row["muzzle_x"] = row["muzzle_y"] = 0
+        row["muzzle_dir_x"] = row["muzzle_dir_y"] = 0.0
+        
+        if object_model is not None:
+            # Detect objects in frame (looking for firearms, sports equipment, etc.)
+            obj_results = object_model(frame, conf=CONF_THRES, max_det=5)[0]
+            
+            # Look for objects that could be firearms or held items
+            # YOLOv8 COCO classes: 0=person, 39=bottle, 40=wine glass, 41=cup, etc.
+            # We'll use hand positions to identify held objects
+            if len(obj_results.boxes.xyxy) > 0 and (9 in pts or 10 in pts):  # If wrists detected
+                # Find object closest to hands (likely held item)
+                best_obj_idx = -1
+                min_dist = float('inf')
+                
+                for obj_idx, (box, conf, cls) in enumerate(zip(obj_results.boxes.xyxy, 
+                                                                obj_results.boxes.conf,
+                                                                obj_results.boxes.cls)):
+                    x1, y1, x2, y2 = box.cpu().numpy()
+                    obj_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+                    
+                    # Calculate distance to hands
+                    for wrist_idx in [9, 10]:  # Left and right wrists
+                        if wrist_idx in pts:
+                            dist = np.linalg.norm(obj_center - pts[wrist_idx])
+                            if dist < min_dist:
+                                min_dist = dist
+                                best_obj_idx = obj_idx
+                
+                # If we found an object near hands (within reasonable distance)
+                if best_obj_idx >= 0 and min_dist < shoulder_width * 3:  # Within 3x shoulder width
+                    x1, y1, x2, y2 = obj_results.boxes.xyxy[best_obj_idx].cpu().numpy()
+                    
+                    # Calculate muzzle position (end of object farthest from hands)
+                    # Approximate muzzle as the end of bbox farthest from wrist positions
+                    obj_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+                    
+                    # Get hand center
+                    hand_positions = []
+                    if 9 in pts:
+                        hand_positions.append(pts[9])
+                    if 10 in pts:
+                        hand_positions.append(pts[10])
+                    
+                    if len(hand_positions) > 0:
+                        hand_center = np.mean(hand_positions, axis=0)
+                        
+                        # Calculate direction from hand to object center
+                        hand_to_obj = obj_center - hand_center
+                        if np.linalg.norm(hand_to_obj) > 1.0:
+                            hand_to_obj = hand_to_obj / np.linalg.norm(hand_to_obj)
+                            
+                            # Muzzle is at the far end of the object in the direction away from hands
+                            # Use bbox corners to find farthest point
+                            corners = np.array([
+                                [x1, y1], [x2, y1], [x1, y2], [x2, y2]
+                            ])
+                            
+                            # Find corner farthest from hand center
+                            distances = [np.linalg.norm(corner - hand_center) for corner in corners]
+                            farthest_idx = np.argmax(distances)
+                            muzzle_pos = corners[farthest_idx]
+                            
+                            # Calculate muzzle direction (from hand center through muzzle)
+                            muzzle_dir = muzzle_pos - hand_center
+                            if np.linalg.norm(muzzle_dir) > 1.0:
+                                muzzle_dir = muzzle_dir / np.linalg.norm(muzzle_dir)
+                                
+                                # Smooth muzzle direction over time
+                                if prev_muzzle_dir is not None:
+                                    muzzle_dir = unit(lerp(prev_muzzle_dir, muzzle_dir, 0.3))
+                                
+                                prev_muzzle_dir = muzzle_dir.copy()
+                                
+                                # Set CSV values
+                                row["muzzle_detected"] = 1
+                                row["muzzle_x"] = float(muzzle_pos[0])
+                                row["muzzle_y"] = float(muzzle_pos[1])
+                                row["muzzle_dir_x"] = float(muzzle_dir[0])
+                                row["muzzle_dir_y"] = float(muzzle_dir[1])
+                                
+                                # Draw muzzle cone (cyan/blue for distinction from red gaze cone)
+                                if 0 <= muzzle_pos[0] < w and 0 <= muzzle_pos[1] < h:
+                                    # Draw narrow, long cone for aim trajectory
+                                    draw_cone(frame, muzzle_pos, muzzle_dir, MUZZLE_LENGTH,
+                                            MUZZLE_CONE_H_ANGLE, MUZZLE_CONE_V_ANGLE, 
+                                            (255, 128, 0), mask=None)  # Cyan/light blue color
+                                    
+                                    # Draw muzzle point marker
+                                    cv2.circle(frame, tuple(muzzle_pos.astype(int)), 7, (255, 255, 0), -1)
+                                    
+                                    # Draw line from hand to muzzle for clarity
+                                    cv2.line(frame, tuple(hand_center.astype(int)), 
+                                           tuple(muzzle_pos.astype(int)), (255, 128, 0), 2)
         
         # -------- CALCULATE ADDITIONAL METRICS --------
         # Joint angles
