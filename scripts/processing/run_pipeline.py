@@ -60,7 +60,7 @@ OUTPUT_PATH = "data/output/output_full.mp4"
 CSV_PATH    = "data/output/analytics.csv"
 
 # Limit processing to first N frames for testing (set to None to process entire video)
-MAX_FRAMES = 30  # Process only first 30 frames for quick validation
+MAX_FRAMES = None  # Process entire video
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
