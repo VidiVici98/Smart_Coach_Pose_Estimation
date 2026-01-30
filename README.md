@@ -48,6 +48,11 @@ python scripts/processing/run_pipeline.py
 - `data/output/output_full.mp4` - Annotated video with pose overlays
 - `data/output/analytics.csv` - Frame-by-frame metrics (285 fields per frame)
 
+**Generate coaching feedback:**
+```bash
+python scripts/tools/generate_coaching_report.py data/output/analytics.csv --format html --output report.html
+```
+
 **📖 For detailed setup instructions, see [SETUP.md](docs/guides/SETUP.md)**  
 **📱 Working on mobile? See [MOBILE_WORKFLOW.md](docs/guides/MOBILE_WORKFLOW.md)**
 
@@ -57,13 +62,15 @@ python scripts/processing/run_pipeline.py
 
 This repository contains the **computer vision and analytics pipeline** responsible for extracting biomechanical, spatial, and safety-related metrics from training video. It is a **foundational, model-agnostic processing layer** designed to turn raw video into structured, time-series data suitable for downstream analysis, coaching feedback, and machine learning.
 
-**This repo does NOT perform interpretation, coaching logic, scoring, or user-facing feedback.**
-It focuses exclusively on:
+**New: Coaching Insights Engine** - The repo now includes a rule-based coaching feedback system that converts raw metrics into actionable recommendations. See [Coaching Engine Guide](docs/COACHING_ENGINE_GUIDE.md).
+
+This repo focuses on:
 
 * Detecting bodies, hands, and relevant objects in video
 * Tracking pose and motion over time
 * Normalizing measurements across subjects and camera setups
 * Exporting high-quality, frame-accurate analytics data
+* **Generating coaching feedback** from biomechanical metrics
 
 ---
 
