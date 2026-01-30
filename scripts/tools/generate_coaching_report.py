@@ -84,12 +84,40 @@ Examples:
     
     try:
         df = pd.read_csv(csv_path)
+        
+        # Validate dataframe is not empty
+        if len(df) == 0:
+            print(f"⚠️  Warning: CSV file is empty", file=sys.stderr)
+            print(f"   No data to analyze. Exiting.", file=sys.stderr)
+            sys.exit(0)
+        
+        if args.verbose:
+            print(f"   ✓ Loaded {len(df)} frames with {len(df.columns)} metrics")
+            
+            # Check for common issues
+            if df.isnull().all().any():
+                null_cols = df.columns[df.isnull().all()].tolist()
+                print(f"   ⚠️  Warning: {len(null_cols)} columns are entirely null")
+                
+            nan_percent = (df.isnull().sum().sum() / (len(df) * len(df.columns))) * 100
+            if nan_percent > 50:
+                print(f"   ⚠️  Warning: {nan_percent:.1f}% of data is missing")
+            
+    except FileNotFoundError:
+        print(f"❌ Error: Input file not found: {csv_path}", file=sys.stderr)
+        sys.exit(1)
+    except pd.errors.EmptyDataError:
+        print(f"❌ Error: CSV file is empty or corrupted", file=sys.stderr)
+        sys.exit(1)
+    except pd.errors.ParserError as e:
+        print(f"❌ Error: Could not parse CSV file: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"❌ Error reading CSV: {e}", file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
-    
-    if args.verbose:
-        print(f"   ✓ Loaded {len(df)} frames with {len(df.columns)} metrics")
     
     # Create coaching engine
     engine = CoachingEngine()

@@ -48,16 +48,19 @@ class FirearmDetector:
         
         Args:
             model: YOLOv8 model instance
-            confidence_threshold: Minimum confidence for detection
+            confidence_threshold: Minimum confidence for detection (0-1)
             target_classes: List of class names to detect (e.g., ['gun', 'handgun', 'pistol'])
             smoothing_alpha: Temporal smoothing factor (0-1, higher = more smoothing)
             buffer_size: Number of recent detections to buffer
         """
         self.model = model
-        self.confidence_threshold = confidence_threshold
+        
+        # Validate and clamp parameters
+        self.confidence_threshold = max(0.0, min(1.0, confidence_threshold))
+        self.smoothing_alpha = max(0.0, min(1.0, smoothing_alpha))
+        self.buffer_size = max(1, min(buffer_size, 100))  # Reasonable limits
+        
         self.target_classes = target_classes or ['gun', 'handgun', 'pistol', 'firearm', 'weapon']
-        self.smoothing_alpha = smoothing_alpha
-        self.buffer_size = buffer_size
         
         # State for temporal smoothing
         self.prev_bbox = None
@@ -69,15 +72,30 @@ class FirearmDetector:
         Detect firearm in frame.
         
         Args:
-            frame: Input image frame
+            frame: Input image frame (BGR or RGB)
             
         Returns:
             FirearmDetection object if detected, None otherwise
         """
-        # Run YOLO detection
-        results = self.model(frame, conf=self.confidence_threshold, verbose=False)
+        # Validate frame
+        if frame is None or not isinstance(frame, np.ndarray):
+            return None
         
-        if len(results) == 0 or len(results[0].boxes) == 0:
+        if frame.size == 0:
+            return None
+        
+        # Check frame dimensions
+        if len(frame.shape) < 2:
+            return None
+        
+        try:
+            # Run YOLO detection
+            results = self.model(frame, conf=self.confidence_threshold, verbose=False)
+            
+            if len(results) == 0 or len(results[0].boxes) == 0:
+                return None
+        except Exception:
+            # If detection fails for any reason, return None gracefully
             return None
         
         # Find highest confidence detection matching target classes
@@ -263,6 +281,12 @@ def fuse_firearm_and_arm_estimates(
         Tuple of (fused_direction, source_string)
         source_string is one of: 'firearm', 'blended', 'arms', 'none'
     """
+    # Clamp confidence to valid range
+    firearm_confidence = max(0.0, min(1.0, firearm_confidence))
+    
+    # Clamp blend weight to valid range
+    blend_weight = max(0.0, min(1.0, blend_weight))
+    
     # No estimates available
     if firearm_direction is None and arm_direction is None:
         return None, 'none'
@@ -273,6 +297,20 @@ def fuse_firearm_and_arm_estimates(
     
     # Only firearm estimate available
     if arm_direction is None:
+        return firearm_direction, 'firearm'
+    
+    # Validate directions are not zero vectors
+    firearm_norm = np.linalg.norm(firearm_direction)
+    arm_norm = np.linalg.norm(arm_direction)
+    
+    if firearm_norm < 1e-6 and arm_norm < 1e-6:
+        # Both are zero vectors
+        return None, 'none'
+    elif firearm_norm < 1e-6:
+        # Firearm is zero, use arms
+        return arm_direction, 'arms'
+    elif arm_norm < 1e-6:
+        # Arm is zero, use firearm
         return firearm_direction, 'firearm'
     
     # Both available - decide how to fuse
@@ -313,9 +351,21 @@ def check_muzzle_body_intersection(
     if body_mask is None or muzzle_point is None or muzzle_direction is None:
         return False, 0.0
     
+    # Validate ray_length
+    ray_length = max(1, min(ray_length, 1000))  # Clamp to reasonable range
+    
     h, w = body_mask.shape[:2]
     x, y = muzzle_point
     dx, dy = muzzle_direction
+    
+    # Validate muzzle point is not NaN or infinite
+    if not np.isfinite([x, y]).all():
+        return False, 0.0
+    
+    # Validate direction is not zero
+    direction_norm = np.linalg.norm(muzzle_direction)
+    if direction_norm < 1e-6:
+        return False, 0.0
     
     # Cast ray from muzzle point
     for dist in range(0, ray_length, 2):  # Check every 2 pixels for efficiency
