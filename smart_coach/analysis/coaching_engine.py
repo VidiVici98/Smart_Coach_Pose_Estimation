@@ -158,20 +158,36 @@ class CoachingEngine:
         return [
             # === SAFETY RULES (CRITICAL) ===
             
-            # TODO: Add gaze_on_body safety rule when firearm detection is integrated
-            # CoachingRule(
-            #     name="muzzle_sweeping_body",
-            #     title="⚠️ Muzzle Sweeping Body",
-            #     description="Your firearm muzzle is pointing at or near your body. "
-            #                 "Always keep muzzle pointed in a safe direction. "
-            #                 "Review your draw and holster technique with an instructor.",
-            #     metric="gaze_on_body",  # Placeholder - will use actual muzzle vector when available
-            #     threshold=0.5,
-            #     comparison=MetricComparison.GREATER,
-            #     severity=Severity.CRITICAL,
-            #     min_frames=1,  # Even one frame is critical
-            #     frame_percentage=0.01
-            # ),
+            CoachingRule(
+                name="muzzle_sweeping_body",
+                title="🔴 CRITICAL: Muzzle Sweeping Body",
+                description="Your firearm muzzle is pointing at or near your body. "
+                            "This is a CRITICAL safety violation. "
+                            "Always keep muzzle pointed in a safe direction (downrange or at the ground). "
+                            "Review your draw and holster technique with a certified instructor IMMEDIATELY. "
+                            "Never allow the muzzle to cross any part of your body.",
+                metric="muzzle_on_body",
+                threshold=0.5,  # Any value > 0.5 indicates intersection
+                comparison=MetricComparison.GREATER,
+                severity=Severity.CRITICAL,
+                min_frames=1,  # Even ONE frame is critical
+                frame_percentage=0.001  # 0.1% - any occurrence is serious
+            ),
+            
+            CoachingRule(
+                name="firearm_detection_inconsistent",
+                title="Firearm Detection Inconsistent",
+                description="The system is having difficulty consistently detecting your firearm. "
+                            "This may affect muzzle direction tracking accuracy. "
+                            "Ensure good lighting, avoid excessive motion blur, and keep the firearm clearly visible. "
+                            "Consider using a firearm with more distinct visual features or better camera positioning.",
+                metric="firearm_confidence",
+                threshold=0.4,  # Low average confidence
+                comparison=MetricComparison.LESS,
+                severity=Severity.MEDIUM,
+                min_frames=30,
+                frame_percentage=0.30  # 30% of frames with low confidence
+            ),
             
             # === STANCE RULES ===
             
@@ -295,6 +311,55 @@ class CoachingEngine:
                 min_frames=20,
                 frame_percentage=0.10
             ),
+            
+            # === FIREARM HANDLING ===
+            
+            CoachingRule(
+                name="muzzle_elevation_excessive",
+                title="Excessive Muzzle Elevation",
+                description="Your muzzle is frequently elevated too high during presentation. "
+                            "While some elevation during draw is natural, excessive upward pointing "
+                            "can slow your presentation and increase the risk of flagging. "
+                            "Practice a more direct path from holster to target. "
+                            "Ideal elevation at full extension should be 0-5 degrees.",
+                metric="L_muzzle_elevation",  # Using left side as primary
+                threshold=25.0,  # degrees above horizontal
+                comparison=MetricComparison.GREATER,
+                severity=Severity.MEDIUM,
+                min_frames=15,
+                frame_percentage=0.20
+            ),
+            
+            CoachingRule(
+                name="muzzle_depression_excessive",
+                title="Excessive Muzzle Depression",
+                description="Your muzzle is frequently depressed too low during presentation. "
+                            "While safety requires downward muzzle during draw, excessive depression "
+                            "can indicate an inefficient draw stroke or hesitation. "
+                            "Work on a smooth, confident presentation with minimal vertical deviation.",
+                metric="L_muzzle_elevation",  # Using left side as primary
+                threshold=-15.0,  # degrees below horizontal
+                comparison=MetricComparison.LESS,
+                severity=Severity.LOW,
+                min_frames=15,
+                frame_percentage=0.15
+            ),
+            
+            CoachingRule(
+                name="firearm_not_detected",
+                title="⚠️ Firearm Not Detected",
+                description="The firearm was not detected in a significant portion of frames. "
+                            "This may affect the accuracy of muzzle direction and firearm-specific metrics. "
+                            "Possible causes: poor lighting, excessive motion blur, obstructed camera view, "
+                            "or firearm color blending with background. "
+                            "Consider: better lighting, slower movements for analysis, or camera repositioning.",
+                metric="firearm_detected",
+                threshold=0.5,  # Less than 50% detection is concerning
+                comparison=MetricComparison.LESS,
+                severity=Severity.MEDIUM,
+                min_frames=50,
+                frame_percentage=0.50  # If >50% of frames have no detection
+            ),
         ]
     
     def add_derived_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -403,8 +468,27 @@ class CoachingEngine:
             medium = [v for v in violations if v['severity'] == Severity.MEDIUM]
             low = [v for v in violations if v['severity'] == Severity.LOW]
             
+            # CRITICAL SAFETY ALERTS - Show prominently first
             if critical:
-                lines.append(f"⚠️  CRITICAL ISSUES: {len(critical)}")
+                lines.append("🚨" * 40)
+                lines.append("⚠️  CRITICAL SAFETY ISSUES DETECTED: {len(critical)}")
+                lines.append("🚨" * 40)
+                lines.append("")
+                lines.append("IMMEDIATE ACTION REQUIRED!")
+                lines.append("These issues represent serious safety violations that must be addressed")
+                lines.append("before continuing live-fire training. Review with a certified instructor.")
+                lines.append("")
+                
+                for v in critical:
+                    lines.append(f"🔴 {v['title']}")
+                    lines.append(f"   Occurred in {v['percentage']:.1f}% of frames ({v['num_frames']} frames)")
+                    lines.append(f"   Example frames: {v['example_frames'][:5]}")
+                    lines.append("")
+                
+                lines.append("🚨" * 40)
+                lines.append("")
+            
+            # Standard priority summary
             if high:
                 lines.append(f"🔴 HIGH PRIORITY: {len(high)}")
             if medium:
@@ -434,10 +518,20 @@ class CoachingEngine:
         lines.append("=" * 80)
         lines.append("NEXT STEPS:")
         lines.append("")
-        lines.append("1. Review flagged frames in the annotated video output")
-        lines.append("2. Focus on the highest priority issues first")
-        lines.append("3. Practice drills targeting specific weaknesses")
-        lines.append("4. Record follow-up session to track improvement")
+        
+        # Customize next steps based on critical issues
+        if any(v['severity'] == Severity.CRITICAL for v in violations):
+            lines.append("⚠️  CRITICAL: Address all safety violations before live-fire training")
+            lines.append("1. Review flagged frames with a certified firearms instructor")
+            lines.append("2. Practice draw and presentation with empty firearm")
+            lines.append("3. Record dry-fire session to verify safety improvements")
+            lines.append("4. Only return to live-fire after instructor approval")
+        else:
+            lines.append("1. Review flagged frames in the annotated video output")
+            lines.append("2. Focus on the highest priority issues first")
+            lines.append("3. Practice drills targeting specific weaknesses")
+            lines.append("4. Record follow-up session to track improvement")
+        
         lines.append("=" * 80)
         
         return "\n".join(lines)
@@ -512,6 +606,9 @@ class CoachingEngine:
             h1 { color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; }
             h2 { color: #555; margin-top: 30px; }
             .summary { background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .safety-alert { background: #ffebee; border: 3px solid #f44336; padding: 20px; border-radius: 5px; margin: 20px 0; }
+            .safety-alert h2 { color: #c62828; margin-top: 0; }
+            .safety-alert-item { background: white; padding: 10px; margin: 10px 0; border-left: 4px solid #f44336; }
             .issue { border-left: 4px solid #ddd; padding: 15px; margin: 20px 0; background: #fafafa; }
             .critical { border-left-color: #f44336; background: #ffebee; }
             .high { border-left-color: #ff9800; background: #fff3e0; }
@@ -524,6 +621,7 @@ class CoachingEngine:
             .badge-low { background: #4CAF50; color: white; }
             .stats { color: #666; font-size: 14px; margin-top: 10px; }
             .next-steps { background: #e3f2fd; padding: 20px; border-radius: 5px; margin-top: 30px; }
+            .critical-next-steps { background: #ffebee; padding: 20px; border-radius: 5px; margin-top: 30px; border: 2px solid #f44336; }
             .no-issues { text-align: center; padding: 40px; color: #4CAF50; font-size: 18px; }
         """)
         html.append("</style>")
@@ -544,7 +642,26 @@ class CoachingEngine:
             html.append("Keep up the excellent form and continue practicing fundamentals.")
             html.append("</div>")
         else:
-            html.append("<h2>Issues Detected</h2>")
+            # Critical safety alerts section
+            critical_violations = [v for v in violations if v['severity'] == Severity.CRITICAL]
+            if critical_violations:
+                html.append("<div class='safety-alert'>")
+                html.append("<h2>🚨 CRITICAL SAFETY ALERTS</h2>")
+                html.append("<p><strong>IMMEDIATE ACTION REQUIRED!</strong></p>")
+                html.append("<p>The following critical safety violations were detected. "
+                           "These issues must be addressed before continuing live-fire training. "
+                           "Review with a certified firearms instructor.</p>")
+                
+                for v in critical_violations:
+                    html.append("<div class='safety-alert-item'>")
+                    html.append(f"<strong>⚠️ {v['title']}</strong><br>")
+                    html.append(f"Occurred in {v['percentage']:.1f}% of frames ({v['num_frames']} frames)<br>")
+                    html.append(f"Example frames: {', '.join(map(str, v['example_frames'][:5]))}")
+                    html.append("</div>")
+                
+                html.append("</div>")
+            
+            html.append("<h2>All Issues Detected</h2>")
             
             for v in violations:
                 severity_class = v['severity'].value
@@ -560,15 +677,28 @@ class CoachingEngine:
                 html.append("</div>")
                 html.append("</div>")
         
-        html.append("<div class='next-steps'>")
-        html.append("<h2>📋 Next Steps</h2>")
-        html.append("<ol>")
-        html.append("<li>Review flagged frames in the annotated video output</li>")
-        html.append("<li>Focus on the highest priority issues first</li>")
-        html.append("<li>Practice drills targeting specific weaknesses</li>")
-        html.append("<li>Record follow-up session to track improvement</li>")
-        html.append("</ol>")
-        html.append("</div>")
+        # Customize next steps based on critical issues
+        if any(v['severity'] == Severity.CRITICAL for v in violations):
+            html.append("<div class='critical-next-steps'>")
+            html.append("<h2>⚠️ Critical Next Steps</h2>")
+            html.append("<ol>")
+            html.append("<li><strong>STOP live-fire training immediately</strong></li>")
+            html.append("<li>Review flagged frames with a certified firearms instructor</li>")
+            html.append("<li>Practice draw and presentation with empty firearm</li>")
+            html.append("<li>Record dry-fire session to verify safety improvements</li>")
+            html.append("<li>Only return to live-fire after instructor approval</li>")
+            html.append("</ol>")
+            html.append("</div>")
+        else:
+            html.append("<div class='next-steps'>")
+            html.append("<h2>📋 Next Steps</h2>")
+            html.append("<ol>")
+            html.append("<li>Review flagged frames in the annotated video output</li>")
+            html.append("<li>Focus on the highest priority issues first</li>")
+            html.append("<li>Practice drills targeting specific weaknesses</li>")
+            html.append("<li>Record follow-up session to track improvement</li>")
+            html.append("</ol>")
+            html.append("</div>")
         
         html.append("</div>")
         html.append("</body>")
