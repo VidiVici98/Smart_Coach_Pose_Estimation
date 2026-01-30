@@ -257,9 +257,9 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
                             sin_a * vec[0] + cos_a * vec[1]])
         
         # Enhanced visibility: more shells and higher alpha values for screenshots
-        num_shells = 5  # More shells for smoother gradient
-        edge_alpha = 0.35  # Increased for better visibility in screenshots
-        center_alpha = 0.7  # Increased for better visibility in screenshots
+        num_shells = 7  # More shells for smoother gradient and better visibility
+        edge_alpha = 0.45  # Increased for better visibility in screenshots
+        center_alpha = 0.8  # Increased for better visibility in screenshots
         
         # Draw from outermost to innermost for proper layering
         for shell_idx in range(num_shells - 1, -1, -1):
@@ -971,10 +971,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                             if frame_idx < 5 or frame_idx % 30 == 0:  # Print for first 5 frames and every 30th frame
                                                 print(f"  Frame {frame_idx}: Gaze detected - origin: {cone_origin.astype(int)}, direction: {gaze_vec}")
                                             
-                                            # Draw cone with radial confidence gradient (center=0.6 alpha, edges=0.25)
+                                            # Draw cone with radial confidence gradient (center=0.7 alpha, edges=0.35)
+                                            # Changed to red for high visibility against all backgrounds
                                             # Body mask clipping shows only external portion
                                             draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 255, 255), mask=body_mask)
+                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=body_mask)
                                         else:
                                             if frame_idx < 5:
                                                 print(f"  Frame {frame_idx}: Cone origin out of bounds: {cone_origin.astype(int)}")
