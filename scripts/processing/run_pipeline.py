@@ -60,7 +60,9 @@ OUTPUT_PATH = "data/output/output_full.mp4"
 CSV_PATH    = "data/output/analytics.csv"
 
 # Limit processing to first N frames for testing (set to None to process entire video)
+# Or set SAMPLE_FRAMES to process only specific frames from different points
 MAX_FRAMES = None  # Process entire video
+SAMPLE_FRAMES = [5, 15, 25, 35, 45]  # Process only these specific frames for validation
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
@@ -600,6 +602,8 @@ FACE_3D_POINTS = np.array([
 # MAIN LOOP
 # -------------------------
 print(f"\nStarting processing: {frame_count} frames at {fps:.2f} FPS")
+if SAMPLE_FRAMES is not None:
+    print(f"SAMPLE MODE: Processing only frames {SAMPLE_FRAMES}")
 print("=" * 60)
 
 # Memory management
@@ -618,6 +622,11 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         ret, frame = cap.read()
         if not ret:
             break
+        
+        # Skip frames not in SAMPLE_FRAMES if specified
+        if SAMPLE_FRAMES is not None and frame_idx not in SAMPLE_FRAMES:
+            frame_idx += 1
+            continue
         
         # Check if we've reached the max frame limit
         if MAX_FRAMES is not None and frames_processed >= MAX_FRAMES:
