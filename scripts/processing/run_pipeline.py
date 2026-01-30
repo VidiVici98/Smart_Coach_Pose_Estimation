@@ -297,7 +297,7 @@ def draw_cone(frame, origin, direction, length, h_angle, v_angle, color, mask=No
             # Blend this shell with the calculated alpha
             cv2.addWeighted(overlay, shell_alpha, frame, 1 - shell_alpha, 0, frame)
             
-        print(f"DEBUG: Drew gaze cone at origin {o.astype(int)} with direction {d}")
+        print(f"DEBUG: Drew gaze cone at origin {o.astype(int)} with direction {d}", flush=True)
     except Exception as e:
         # Print error for debugging but don't crash the pipeline
         print(f"DEBUG: Error in draw_cone: {type(e).__name__}: {e}")
@@ -454,9 +454,9 @@ if mp_face is None and os.path.exists(FACE_LANDMARKER_PATH):
             base_options=python.BaseOptions(model_asset_path=FACE_LANDMARKER_PATH),
             running_mode=VisionRunningMode.IMAGE,  # IMAGE mode is more stable than VIDEO
             num_faces=1,
-            min_face_detection_confidence=0.5,
-            min_face_presence_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_face_detection_confidence=0.3,  # Lowered from 0.5
+            min_face_presence_confidence=0.3,   # Lowered from 0.5
+            min_tracking_confidence=0.3         # Lowered from 0.5
         )
         
         print("    Creating FaceLandmarker...", flush=True)
@@ -794,6 +794,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
             face_results = face_model(frame, conf=CONF_THRES, max_det=1)[0]
 
             if len(face_results.boxes.xyxy) > 0:
+                print(f"  Frame {frame_idx}: Face bbox detected", flush=True)
                 x1, y1, x2, y2 = map(int, face_results.boxes.xyxy[0])
                 # Validate bounding box is within frame and has minimum size
                 x1, y1 = max(0, x1), max(0, y1)
@@ -801,37 +802,67 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                 
                 # Ensure face crop has minimum dimensions (20x20 pixels)
                 if (x2 - x1) >= 20 and (y2 - y1) >= 20:
-                    face_crop = rgb[y1:y2, x1:x2]
+                    print(f"  Frame {frame_idx}: Face bbox {x2-x1}x{y2-y1} at ({x1},{y1})-({x2},{y2})", flush=True)
+                    
+                    # For Tasks API, we should pass the FULL frame, not a crop
+                    # The FaceLandmarker does its own face detection internally
                     mp_results = None
                     
                     try:
                         if face_api_type == 'solutions':
-                            # Solutions API (legacy)
+                            # Solutions API (legacy) - works with face crop
+                            face_crop = rgb[y1:y2, x1:x2]
                             mp_results = mp_face.process(face_crop)
                             has_landmarks = mp_results and mp_results.multi_face_landmarks
                             
                         elif face_api_type == 'tasks':
-                            # Tasks API (modern) - using IMAGE mode (more stable)
-                            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_crop)
-                            mp_results = mp_face.detect(mp_image)  # IMAGE mode uses detect() not detect_for_video()
-                            has_landmarks = mp_results and mp_results.face_landmarks
+                            # Tasks API (modern) - use FULL frame, not crop
+                            # FaceLandmarker does its own face detection
+                            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                            mp_results = mp_face.detect(mp_image)
+                            
+                            # Debug: Save first frame for inspection
+                            if frame_idx == 10:
+                                import cv2 as cv2_debug
+                                cv2_debug.imwrite('/tmp/debug_frame_10.jpg', frame)
+                                print(f"  DEBUG: Saved /tmp/debug_frame_10.jpg for inspection", flush=True)
+                            
+                            # Check if we got any face landmarks
+                            has_landmarks = (mp_results and 
+                                           mp_results.face_landmarks and 
+                                           len(mp_results.face_landmarks) > 0)
+                            print(f"  Frame {frame_idx}: MediaPipe found {len(mp_results.face_landmarks) if mp_results and mp_results.face_landmarks else 0} faces", flush=True)
+                            
+                            # Debug: print more info
+                            if mp_results:
+                                print(f"  Frame {frame_idx}: mp_results exists, face_landmarks={mp_results.face_landmarks}", flush=True)
+                        
+                        print(f"  Frame {frame_idx}: has_landmarks={has_landmarks}", flush=True)
                             
                     except Exception as e:
                         # Skip face processing on error but continue pipeline
                         has_landmarks = False
+                        print(f"  Frame {frame_idx}: MediaPipe error: {e}", flush=True)
 
                     if has_landmarks:
+                        print(f"  Frame {frame_idx}: Processing face landmarks", flush=True)
                         # Extract landmarks based on API type
                         if face_api_type == 'solutions':
                             lm = mp_results.multi_face_landmarks[0].landmark
+                            # For Solutions API, coordinates are relative to face crop
+                            def L(i):
+                                lm_i = lm[i]
+                                # Convert normalized coordinates to frame coordinates
+                                return np.array([lm_i.x * (x2 - x1) + x1,
+                                                 lm_i.y * (y2 - y1) + y1], dtype=np.float32)
                         else:  # tasks
                             lm = mp_results.face_landmarks[0]
-
-                        def L(i):
-                            lm_i = lm[i]
-                            # Convert normalized coordinates to frame coordinates
-                            return np.array([lm_i.x * (x2 - x1) + x1,
-                                             lm_i.y * (y2 - y1) + y1], dtype=np.float32)
+                            # For Tasks API, coordinates are relative to full frame
+                            def L(i):
+                                lm_i = lm[i]
+                                # Convert normalized coordinates to frame coordinates
+                                return np.array([lm_i.x * w,
+                                                 lm_i.y * h], dtype=np.float32)
 
                         # Build points, filter Nones
                         image_points, model_points_filtered = [], []
@@ -844,6 +875,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                         model_points_filtered = np.array(model_points_filtered, dtype=np.float32)
 
                         if len(image_points) >= 4:  # Need at least 4 points for solvePnP
+                            print(f"  Frame {frame_idx}: Got {len(image_points)} image points for solvePnP", flush=True)
                             # Use robust focal length estimation: average of width and height
                             # This adapts better to different aspect ratios and camera angles
                             focal_length = (w + h) / 2.0
@@ -858,6 +890,7 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                             )
 
                             if success:
+                                print(f"  Frame {frame_idx}: solvePnP successful", flush=True)
                                 rot_mat, _ = cv2.Rodrigues(rotation_vector)
                                 head_forward = rot_mat[:, 2].copy()
 
@@ -973,18 +1006,16 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                             
                                             # Draw cone with radial confidence gradient (center=0.7 alpha, edges=0.35)
                                             # Changed to red for high visibility against all backgrounds
-                                            # Body mask clipping shows only external portion
+                                            # Draw without body mask clipping so gaze cone is fully visible
                                             draw_cone(frame, cone_origin, gaze_vec, GAZE_LENGTH + CONE_ORIGIN_OFFSET,
-                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=body_mask)
+                                                      GAZE_CONE_H_ANGLE, GAZE_CONE_V_ANGLE, (0, 0, 255), mask=None)
                                         else:
                                             if frame_idx < 5:
                                                 print(f"  Frame {frame_idx}: Cone origin out of bounds: {cone_origin.astype(int)}")
                                     else:
-                                        if frame_idx < 5:
-                                            print(f"  Frame {frame_idx}: Eye distance too small: {eye_distance:.1f}px")
+                                        print(f"  Frame {frame_idx}: Eye distance too small: {eye_distance:.1f}px", flush=True)
                                 else:
-                                    if frame_idx < 5:
-                                        print(f"  Frame {frame_idx}: Eye landmarks not detected")
+                                    print(f"  Frame {frame_idx}: Eye landmarks not detected (eye_left={eye_left is not None}, eye_right={eye_right is not None})", flush=True)
 
                                 # Draw key face landmarks
                                 for idx in [1, 33, 263, 61, 291, 152]:
