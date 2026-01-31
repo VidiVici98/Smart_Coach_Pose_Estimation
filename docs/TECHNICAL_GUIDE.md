@@ -1,25 +1,27 @@
 # Technical Guide
 
-## 1. Technical Architecture
+## Overview
+This document serves as a comprehensive technical guide for the Smart Coach Pose Estimation system. It encapsulates key aspects derived from several foundational documents, presenting a unified resource.
 
-This section provides an overview of the architecture used in the Smart Coach Pose Estimation project. The architecture includes various components that interact to facilitate pose estimation effectively.
+## Technical Reference
+The technical reference document provides insights into the algorithms and methodologies employed in the pose estimation framework. Key algorithms include:
+- **Algorithm 1:** Description of algorithm 1.
+- **Algorithm 2:** Description of algorithm 2.
 
-## 2. Detection Systems
+## Gaze Fix Final Summary
+This section outlines the most recent conclusions from the Gaze Fix project, including:
+- **Findings:** Main findings from the gaze fixation studies.
+- **Recommendations:** Suggested actions based on findings.
 
-Here, we summarize the detection systems implemented in the project. This includes details on the algorithms used, their configurations, and performance metrics.
+## Gaze Side Angle Summary
+A synopsis of the gaze side angle research, detailing:
+- **Measurements:** Overview of how angles were measured.
+- **Results:** Key results that emerged from the analysis.
 
-## 3. Gaze Improvements
+## Metrics Reference
+In this section, a reference to the metrics used throughout the system is provided:
+- **Metric 1:** Description and relevance.
+- **Metric 2:** Description and relevance.
 
-This section outlines the improvements made in gaze detection and tracking, including methodologies applied and results obtained from various experiments.
-
-## 4. Metrics Computation
-
-In this section, we detail the metrics used to evaluate the effectiveness of the gaze improvements and pose estimation. This includes computation methods and analysis of results.
-
----
-
-### Merged Files Reference
-
-1. **TECHNICAL_REFERENCE.md**: Contains original technical specifications and guidelines.
-2. **GAZE_FIX_FINAL_SUMMARY.md**: Summarizes the gaze correction methodologies and results.
-3. **GAZE_SIDE_ANGLE_SUMMARY.md**: Discusses the influence of side angles on gaze detection performance.
+## Conclusion
+This guide synthesizes knowledge from various documents to provide a complete understanding of the system's technical aspects, aiding developers and researchers alike.
