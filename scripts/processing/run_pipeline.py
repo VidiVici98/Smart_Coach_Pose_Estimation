@@ -62,10 +62,11 @@ CSV_PATH    = "data/output/analytics.csv"
 # Limit processing to first N frames for testing (set to None to process entire video)
 # Or set SAMPLE_FRAMES to process only specific frames from different points
 MAX_FRAMES = None  # Process entire video
-# Broader sampling across full video duration to capture hands and diverse poses
-# Frame 10: early action, 30: establishing, 60: mid-action, 75: peak, 
-# 100: follow-through, 120: recovery, 140: end sequence
-SAMPLE_FRAMES = [10, 30, 60, 75, 100, 120, 140]  # Broader video coverage for validation
+# Enhanced sampling: every ~15 frames for comprehensive coverage of angles and poses
+# Frame 10: early action, 25: transition, 40: mid-sequence, 55: pose variation,
+# 70: side angle, 85: extended arms, 100: follow-through, 115: recovery,
+# 130: end approach, 145: final sequence
+SAMPLE_FRAMES = [10, 25, 40, 55, 70, 85, 100, 115, 130, 145]  # Diverse timestamp coverage
 
 POSE_MODEL_PATH = "data/models/yolov8m-pose.pt"
 FACE_MODEL_PATH = "data/models/yolov8n-face.pt"
@@ -1587,6 +1588,21 @@ with SuppressStdErr():  # suppress any backend warnings during loop
             row["R_elbow_elevation"] = -pts[8][1] / shoulder_width
         else:
             row["R_elbow_elevation"] = 0.0
+        
+        # -------- ADD FRAME INFO OVERLAY --------
+        # Add frame number and timestamp for reference in screenshots
+        timestamp = frame_idx / fps
+        info_text = f"Frame: {frame_idx} | Time: {timestamp:.2f}s"
+        
+        # Draw semi-transparent background for text
+        text_size = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (5, 5), (text_size[0] + 15, 35), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        
+        # Draw text
+        cv2.putText(frame, info_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                   0.7, (255, 255, 255), 2, cv2.LINE_AA)
         
         # -------- WRITE --------
         csvwriter.writerow(row)
