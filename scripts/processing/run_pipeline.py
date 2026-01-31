@@ -192,14 +192,12 @@ def lerp(a,b,t): return a*(1-t)+b*t
 
 def estimate_robust_gaze_direction(pts, w, h, shoulder_width):
     """
-    Robust gaze direction estimation that works for various camera angles.
+    Improved gaze direction estimation with better head orientation calculation.
     
-    Uses multiple factors:
-    - Eye positions and visibility (frontal vs sideways detection)
-    - Ear positions (profile detection)
-    - Nose position
-    - Shoulder orientation
-    - Hip orientation
+    Key improvements:
+    - Uses ear-to-eye-to-nose geometry for accurate forward direction
+    - Accounts for head rotation and camera angle
+    - Works for frontal, profile, and angled views
     
     Returns: (gaze_vec, confidence) where gaze_vec is 2D normalized direction
     """
@@ -211,117 +209,93 @@ def estimate_robust_gaze_direction(pts, w, h, shoulder_width):
     right_ear = pts.get(4)  # 4
     left_shoulder = pts.get(5)  # 5
     right_shoulder = pts.get(6)  # 6
-    left_hip = pts.get(11)  # 11
-    right_hip = pts.get(12)  # 12
     
     # Need at least nose for any calculation
     if nose is None:
         return None, 0.0
     
-    # === STEP 1: Detect camera angle / person orientation ===
-    # Check eye visibility to determine if frontal or sideways
-    eyes_visible = (left_eye is not None, right_eye is not None)
-    ears_visible = (left_ear is not None, right_ear is not None)
-    
-    # Determine view angle
-    is_frontal = eyes_visible[0] and eyes_visible[1]  # Both eyes visible
-    is_left_profile = eyes_visible[1] and not eyes_visible[0] and ears_visible[0]  # Right eye + left ear
-    is_right_profile = eyes_visible[0] and not eyes_visible[1] and ears_visible[1]  # Left eye + right ear
-    
     gaze_vec = None
     confidence = 0.0
     
-    # === STEP 2: Calculate gaze based on detected angle ===
+    # Calculate ear midpoint and eye midpoint
+    ear_mid = None
+    if left_ear is not None and right_ear is not None:
+        ear_mid = (left_ear + right_ear) / 2
+    elif left_ear is not None:
+        ear_mid = left_ear
+    elif right_ear is not None:
+        ear_mid = right_ear
     
-    if is_frontal and left_eye is not None and right_eye is not None:
-        # FRONTAL VIEW: Use eye midpoint and body orientation
+    eye_mid = None
+    if left_eye is not None and right_eye is not None:
         eye_mid = (left_eye + right_eye) / 2
-        
-        # Get body center reference (shoulders or hips)
-        body_mid = None
-        if left_shoulder is not None and right_shoulder is not None:
-            body_mid = (left_shoulder + right_shoulder) / 2
-        elif left_hip is not None and right_hip is not None:
-            body_mid = (left_hip + right_hip) / 2
-        
-        if body_mid is not None:
-            # Head pointing from body center through eye midpoint
-            head_vec = eye_mid - body_mid
-            
-            # Also consider nose position relative to eyes for fine-tuning
-            if nose is not None:
-                # Nose offset from eye midpoint indicates gaze direction
-                nose_offset = nose - eye_mid
-                # Combine: 70% body direction, 30% nose offset
-                head_vec = 0.7 * head_vec + 0.3 * nose_offset
-            
-            gaze_vec = unit(head_vec)
-            confidence = 0.9
+    elif left_eye is not None:
+        eye_mid = left_eye
+    elif right_eye is not None:
+        eye_mid = right_eye
     
-    elif is_left_profile or is_right_profile:
-        # PROFILE/SIDEWAYS VIEW: Use ear-nose-eye alignment
-        
-        if is_left_profile and left_ear is not None and right_eye is not None:
-            # Left profile: facing right in image
-            # Gaze points from ear through nose/eye
-            if nose is not None:
-                gaze_vec = unit(nose - left_ear)
-            else:
-                gaze_vec = unit(right_eye - left_ear)
-            confidence = 0.8
-            
-        elif is_right_profile and right_ear is not None and left_eye is not None:
-            # Right profile: facing left in image
-            # Gaze points from ear through nose/eye
-            if nose is not None:
-                gaze_vec = unit(nose - right_ear)
-            else:
-                gaze_vec = unit(left_eye - right_ear)
-            confidence = 0.8
+    # === PRIMARY METHOD: Use eye line perpendicular ===
+    # The gaze direction is perpendicular to the line connecting the eyes
+    # and points in the direction away from the ears
     
-    # === STEP 3: Fallback if profile detection didn't work ===
-    if gaze_vec is None:
-        # Use any available reference points
+    if left_eye is not None and right_eye is not None:
+        # Calculate eye line vector
+        eye_line = right_eye - left_eye  # Left to right
         
-        # Try eyes (any combination)
-        if left_eye is not None and right_eye is not None:
-            eye_mid = (left_eye + right_eye) / 2
-        elif left_eye is not None:
-            eye_mid = left_eye
-        elif right_eye is not None:
-            eye_mid = right_eye
+        # Perpendicular to eye line (rotate 90 degrees)
+        # Two perpendiculars: one points forward, one backward
+        perp1 = np.array([-eye_line[1], eye_line[0]])  # Rotate counter-clockwise
+        perp2 = np.array([eye_line[1], -eye_line[0]])  # Rotate clockwise
+        
+        # Determine which perpendicular points forward by using ears or nose
+        if ear_mid is not None:
+            # Forward is away from ears
+            ears_to_eyes = eye_mid - ear_mid
+            # Choose perpendicular that points in same general direction as ears_to_eyes
+            if np.dot(perp1, ears_to_eyes) > np.dot(perp2, ears_to_eyes):
+                forward_base = perp1
+            else:
+                forward_base = perp2
         else:
-            eye_mid = None
+            # Use nose position relative to eyes
+            nose_to_eyes = nose - eye_mid
+            if np.dot(perp1, nose_to_eyes) > np.dot(perp2, nose_to_eyes):
+                forward_base = perp1
+            else:
+                forward_base = perp2
         
-        # Try ears (any combination)
-        if left_ear is not None and right_ear is not None:
-            ear_mid = (left_ear + right_ear) / 2
-        elif left_ear is not None:
-            ear_mid = left_ear
-        elif right_ear is not None:
-            ear_mid = right_ear
+        # Fine-tune with nose position for head tilt
+        if nose is not None:
+            nose_offset = nose - eye_mid
+            # Blend: 70% perpendicular to eyes, 30% toward nose
+            gaze_vec = unit(0.7 * forward_base + 0.3 * nose_offset)
         else:
-            ear_mid = None
+            gaze_vec = unit(forward_base)
         
-        # Calculate gaze from available points
-        if eye_mid is not None and ear_mid is not None:
-            # Eyes are forward of ears, so gaze points from ears to eyes
-            gaze_vec = unit(eye_mid - ear_mid)
-            confidence = 0.6
-        elif nose is not None and ear_mid is not None:
-            # Nose is forward of ears
-            gaze_vec = unit(nose - ear_mid)
-            confidence = 0.5
-        elif nose is not None:
-            # Last resort: use nose-to-shoulders if shoulders visible
-            if left_shoulder is not None and right_shoulder is not None:
-                shoulder_mid = (left_shoulder + right_shoulder) / 2
-                gaze_vec = unit(nose - shoulder_mid)
-                confidence = 0.4
-            elif left_hip is not None and right_hip is not None:
-                hip_mid = (left_hip + right_hip) / 2
-                gaze_vec = unit(nose - hip_mid)
-                confidence = 0.3
+        confidence = 0.9
+        
+    # === FALLBACK: Ear to nose/eyes ===
+    elif ear_mid is not None and nose is not None:
+        # Simple forward from ears through nose
+        forward_vec = nose - ear_mid
+        gaze_vec = unit(forward_vec)
+        confidence = 0.7
+        
+    # === LAST RESORT: Use shoulders ===
+    elif nose is not None and left_shoulder is not None and right_shoulder is not None:
+        shoulder_mid = (left_shoulder + right_shoulder) / 2
+        # Forward is perpendicular to shoulder line
+        shoulder_line = right_shoulder - left_shoulder
+        # Perpendicular (rotate 90 degrees) 
+        perp = np.array([-shoulder_line[1], shoulder_line[0]])
+        
+        # Adjust sign based on nose position
+        nose_to_shoulder = nose - shoulder_mid
+        if np.dot(perp, nose_to_shoulder) < 0:
+            perp = -perp
+        
+        gaze_vec = unit(perp)
+        confidence = 0.4
     
     return gaze_vec, confidence
 
@@ -973,6 +947,34 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     alpha = 0.2 + (confidence * 0.2)  # 0.2-0.4 range
                     gaze_vec = unit(lerp(prev_gaze_vec_2d, gaze_vec, alpha))
                 
+                # SHOOTING STANCE CORRECTION:
+                # If arms are extended forward (shooting stance), adjust gaze to point more downward
+                # Check if wrists are below elbows and arms extended
+                if 7 in pts and 8 in pts and 9 in pts and 10 in pts and 5 in pts and 6 in pts:
+                    left_elbow = pts[7]
+                    right_elbow = pts[8]
+                    left_wrist = pts[9]
+                    right_wrist = pts[10]
+                    left_shoulder = pts[5]
+                    right_shoulder = pts[6]
+                    
+                    # Check if wrists are below elbows (Y coordinate larger = lower in image)
+                    left_wrist_below = left_wrist[1] > left_elbow[1]
+                    right_wrist_below = right_wrist[1] > right_elbow[1]
+                    
+                    # Check if arms are extended
+                    wrist_mid = (left_wrist + right_wrist) / 2
+                    shoulder_mid = (left_shoulder + right_shoulder) / 2
+                    arms_extended = np.linalg.norm(wrist_mid - shoulder_mid) > shoulder_width * 0.7
+                    
+                    if (left_wrist_below or right_wrist_below) and arms_extended:
+                        # In shooting stance - tilt gaze downward
+                        # Preserve horizontal component, add downward component
+                        gaze_horizontal = gaze_vec[0]
+                        # Force a downward tilt (positive Y in image coordinates)
+                        gaze_vertical = abs(gaze_vec[1]) * 0.3  # 30% of magnitude, always downward
+                        gaze_vec = unit(np.array([gaze_horizontal, gaze_vertical]))
+                
                 prev_gaze_vec_2d = gaze_vec.copy()
                 
                 # Set CSV values
@@ -1241,7 +1243,74 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         row["muzzle_detected"] = row["muzzle_x"] = row["muzzle_y"] = 0
         row["muzzle_dir_x"] = row["muzzle_dir_y"] = 0.0
         
-        if object_model is not None:
+        muzzle_pos = None
+        muzzle_dir = None
+        
+        # APPROACH 1: ARM GEOMETRY (Primary method for shooting stances)
+        # This estimates muzzle from arm extension - more reliable than object detection
+        # Check if person is in a shooting stance (both arms extended forward)
+        if 9 in pts and 10 in pts and 5 in pts and 6 in pts:  # Both wrists and shoulders
+            left_wrist = pts[9]
+            right_wrist = pts[10]
+            left_shoulder = pts[5]
+            right_shoulder = pts[6]
+            left_elbow = pts.get(7)
+            right_elbow = pts.get(8)
+            
+            # Calculate arm extensions
+            wrist_mid = (left_wrist + right_wrist) / 2
+            shoulder_mid = (left_shoulder + right_shoulder) / 2
+            
+            # Check if arms are extended (wrists far from shoulders)
+            arms_extended_dist = np.linalg.norm(wrist_mid - shoulder_mid)
+            
+            if arms_extended_dist > shoulder_width * 0.7:  # Arms significantly extended
+                # Calculate forearm directions for better accuracy
+                forearm_dirs = []
+                
+                # Left forearm (elbow to wrist)
+                if left_elbow is not None:
+                    left_forearm = left_wrist - left_elbow
+                    if np.linalg.norm(left_forearm) > 10:  # Valid forearm
+                        forearm_dirs.append(unit(left_forearm))
+                
+                # Right forearm (elbow to wrist)
+                if right_elbow is not None:
+                    right_forearm = right_wrist - right_elbow
+                    if np.linalg.norm(right_forearm) > 10:  # Valid forearm
+                        forearm_dirs.append(unit(right_forearm))
+                
+                # Average forearm direction gives aim direction
+                if len(forearm_dirs) > 0:
+                    muzzle_dir = unit(np.mean(forearm_dirs, axis=0))
+                    
+                    # Muzzle position: place at wrist level, extended forward (not down)
+                    # For shooting stance, muzzle should be in front of hands, not below
+                    # Use the horizontal component of the aim direction
+                    forward_component = np.array([muzzle_dir[0], 0])  # Only X direction
+                    if np.linalg.norm(forward_component) > 0.1:
+                        forward_component = unit(forward_component)
+                        muzzle_extension = shoulder_width * 0.4
+                        muzzle_pos = wrist_mid + forward_component * muzzle_extension
+                    else:
+                        # If aiming straight down, just use wrist position
+                        muzzle_pos = wrist_mid.copy()
+                else:
+                    # Fallback: use wrist to shoulder direction (less accurate)
+                    arm_dir = wrist_mid - shoulder_mid
+                    if np.linalg.norm(arm_dir) > 10:
+                        muzzle_dir = unit(arm_dir)
+                        # Same logic: extend horizontally, not in arm direction
+                        forward_component = np.array([muzzle_dir[0], 0])
+                        if np.linalg.norm(forward_component) > 0.1:
+                            forward_component = unit(forward_component)
+                            muzzle_extension = shoulder_width * 0.4
+                            muzzle_pos = wrist_mid + forward_component * muzzle_extension
+                        else:
+                            muzzle_pos = wrist_mid.copy()
+        
+        # APPROACH 2: Object detection (fallback if arm method didn't work)
+        if muzzle_pos is None and muzzle_dir is None and object_model is not None:
             # Detect objects in frame (looking for firearms, sports equipment, etc.)
             obj_results = object_model(frame, conf=CONF_THRES, max_det=5)[0]
             
@@ -1267,12 +1336,10 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                                 min_dist = dist
                                 best_obj_idx = obj_idx
                 
-                # If we found an object near hands (within reasonable distance)
-                if best_obj_idx >= 0 and min_dist < shoulder_width * 3:  # Within 3x shoulder width
+                # Stricter criteria: object must be very close to hands
+                # and in a reasonable position (not at top or bottom of frame)
+                if best_obj_idx >= 0 and min_dist < shoulder_width * 1.5:  # Within 1.5x shoulder width (tighter)
                     x1, y1, x2, y2 = obj_results.boxes.xyxy[best_obj_idx].cpu().numpy()
-                    
-                    # Calculate muzzle position (end of object farthest from hands)
-                    # Approximate muzzle as the end of bbox farthest from wrist positions
                     obj_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
                     
                     # Get hand center
@@ -1285,53 +1352,63 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                     if len(hand_positions) > 0:
                         hand_center = np.mean(hand_positions, axis=0)
                         
-                        # Calculate direction from hand to object center
-                        hand_to_obj = obj_center - hand_center
-                        if np.linalg.norm(hand_to_obj) > 1.0:
-                            hand_to_obj = hand_to_obj / np.linalg.norm(hand_to_obj)
-                            
-                            # Muzzle is at the far end of the object in the direction away from hands
-                            # Use bbox corners to find farthest point
-                            corners = np.array([
-                                [x1, y1], [x2, y1], [x1, y2], [x2, y2]
-                            ])
-                            
-                            # Find corner farthest from hand center
-                            distances = [np.linalg.norm(corner - hand_center) for corner in corners]
-                            farthest_idx = np.argmax(distances)
-                            muzzle_pos = corners[farthest_idx]
-                            
-                            # Calculate muzzle direction (from hand center through muzzle)
-                            muzzle_dir = muzzle_pos - hand_center
-                            if np.linalg.norm(muzzle_dir) > 1.0:
-                                muzzle_dir = muzzle_dir / np.linalg.norm(muzzle_dir)
+                        # Additional check: object should be in same general Y range as hands
+                        # (not way above or below them)
+                        y_diff = abs(obj_center[1] - hand_center[1])
+                        if y_diff < shoulder_width * 2:  # Within reasonable vertical range
+                            # Calculate direction from hand to object center
+                            hand_to_obj = obj_center - hand_center
+                            if np.linalg.norm(hand_to_obj) > 1.0:
+                                hand_to_obj = hand_to_obj / np.linalg.norm(hand_to_obj)
                                 
-                                # Smooth muzzle direction over time
-                                if prev_muzzle_dir is not None:
-                                    muzzle_dir = unit(lerp(prev_muzzle_dir, muzzle_dir, 0.3))
+                                # Muzzle is at the far end of the object in the direction away from hands
+                                # Use bbox corners to find farthest point
+                                corners = np.array([
+                                    [x1, y1], [x2, y1], [x1, y2], [x2, y2]
+                                ])
                                 
-                                prev_muzzle_dir = muzzle_dir.copy()
+                                # Find corner farthest from hand center
+                                distances = [np.linalg.norm(corner - hand_center) for corner in corners]
+                                farthest_idx = np.argmax(distances)
+                                muzzle_pos = corners[farthest_idx]
                                 
-                                # Set CSV values
-                                row["muzzle_detected"] = 1
-                                row["muzzle_x"] = float(muzzle_pos[0])
-                                row["muzzle_y"] = float(muzzle_pos[1])
-                                row["muzzle_dir_x"] = float(muzzle_dir[0])
-                                row["muzzle_dir_y"] = float(muzzle_dir[1])
-                                
-                                # Draw muzzle cone (cyan/blue for distinction from red gaze cone)
-                                if 0 <= muzzle_pos[0] < w and 0 <= muzzle_pos[1] < h:
-                                    # Draw narrow, long cone for aim trajectory
-                                    draw_cone(frame, muzzle_pos, muzzle_dir, MUZZLE_LENGTH,
-                                            MUZZLE_CONE_H_ANGLE, MUZZLE_CONE_V_ANGLE, 
-                                            (255, 128, 0), mask=None)  # Cyan/light blue color
-                                    
-                                    # Draw muzzle point marker
-                                    cv2.circle(frame, tuple(muzzle_pos.astype(int)), 7, (255, 255, 0), -1)
-                                    
-                                    # Draw line from hand to muzzle for clarity
-                                    cv2.line(frame, tuple(hand_center.astype(int)), 
-                                           tuple(muzzle_pos.astype(int)), (255, 128, 0), 2)
+                                # Calculate muzzle direction (from hand center through muzzle)
+                                muzzle_dir = muzzle_pos - hand_center
+                                if np.linalg.norm(muzzle_dir) > 1.0:
+                                    muzzle_dir = muzzle_dir / np.linalg.norm(muzzle_dir)
+        
+        # Draw and record muzzle if detected/estimated
+        if muzzle_pos is not None and muzzle_dir is not None:
+            # Smooth muzzle direction over time
+            if prev_muzzle_dir is not None:
+                muzzle_dir = unit(lerp(prev_muzzle_dir, muzzle_dir, 0.3))
+            
+            prev_muzzle_dir = muzzle_dir.copy()
+            
+            # Set CSV values
+            row["muzzle_detected"] = 1
+            row["muzzle_x"] = float(muzzle_pos[0])
+            row["muzzle_y"] = float(muzzle_pos[1])
+            row["muzzle_dir_x"] = float(muzzle_dir[0])
+            row["muzzle_dir_y"] = float(muzzle_dir[1])
+            
+            # Draw muzzle cone (bright cyan for high visibility)
+            if 0 <= muzzle_pos[0] < w and 0 <= muzzle_pos[1] < h:
+                # Draw narrow, long cone for aim trajectory
+                # Using bright cyan (0, 255, 255) instead of dark cyan
+                draw_cone(frame, muzzle_pos, muzzle_dir, MUZZLE_LENGTH,
+                        MUZZLE_CONE_H_ANGLE, MUZZLE_CONE_V_ANGLE, 
+                        (0, 255, 255), mask=None)  # Bright cyan color
+                
+                # Draw muzzle point marker (bright yellow)
+                cv2.circle(frame, tuple(muzzle_pos.astype(int)), 8, (0, 255, 255), -1)
+                cv2.circle(frame, tuple(muzzle_pos.astype(int)), 10, (255, 255, 255), 2)  # White outline
+                
+                # Draw line from hands to muzzle for clarity
+                if 9 in pts and 10 in pts:
+                    hand_center = (pts[9] + pts[10]) / 2
+                    cv2.line(frame, tuple(hand_center.astype(int)), 
+                           tuple(muzzle_pos.astype(int)), (0, 255, 255), 3)
         
         # -------- CALCULATE ADDITIONAL METRICS --------
         # Joint angles
