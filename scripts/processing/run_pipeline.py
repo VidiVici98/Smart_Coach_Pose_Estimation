@@ -155,6 +155,9 @@ CONE_ORIGIN_OFFSET = 40  # Distance behind eyes to place cone origin (in pixels)
 MUZZLE_LENGTH = 3000  # Longer cone to show aim trajectory
 MUZZLE_CONE_H_ANGLE = np.radians(4.0)  # Much narrower horizontal angle (4 degrees)
 MUZZLE_CONE_V_ANGLE = np.radians(4.0)  # Much narrower vertical angle (4 degrees)
+# Muzzle direction smoothing: higher than TEMP_ALPHA so the aim indicator tracks
+# the arm closely each frame rather than lagging behind
+MUZZLE_TEMP_ALPHA = 0.65
 
 MAX_GAZE_ROT = 0.12  # rad/frame
 GAZE_BUFFER_LEN = 9   # Increased for stronger median filtering
@@ -949,7 +952,13 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         if hands_detector is not None:
             hand_res = hands_detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
             if hand_res.hand_landmarks:
-                for side,hand in zip(["L","R"], hand_res.hand_landmarks):
+                for hand_idx, hand in enumerate(hand_res.hand_landmarks):
+                    # Use MediaPipe handedness labels for correct L/R assignment
+                    if hand_res.handedness and hand_idx < len(hand_res.handedness):
+                        side = "L" if hand_res.handedness[hand_idx][0].category_name == "Left" else "R"
+                    else:
+                        # Handedness unavailable: index-based fallback may misassign L/R
+                        side = "L" if hand_idx == 0 else "R"
                     pts_hand=[]
                     index_y=None
                     for i,lm in enumerate(hand):
@@ -1353,30 +1362,16 @@ with SuppressStdErr():  # suppress any backend warnings during loop
                 if len(forearm_dirs) > 0:
                     muzzle_dir = unit(np.mean(forearm_dirs, axis=0))
                     
-                    # Muzzle position: place at wrist level, extended forward (not down)
-                    # For shooting stance, muzzle should be in front of hands, not below
-                    # Use the horizontal component of the aim direction
-                    forward_component = np.array([muzzle_dir[0], 0])  # Only X direction
-                    if np.linalg.norm(forward_component) > 0.1:
-                        forward_component = unit(forward_component)
-                        muzzle_extension = shoulder_width * 0.4
-                        muzzle_pos = wrist_mid + forward_component * muzzle_extension
-                    else:
-                        # If aiming straight down, just use wrist position
-                        muzzle_pos = wrist_mid.copy()
+                    # Muzzle position: place at wrist level, extended along the actual arm direction
+                    muzzle_extension = shoulder_width * 0.4
+                    muzzle_pos = wrist_mid + muzzle_dir * muzzle_extension
                 else:
                     # Fallback: use wrist to shoulder direction (less accurate)
                     arm_dir = wrist_mid - shoulder_mid
                     if np.linalg.norm(arm_dir) > 10:
                         muzzle_dir = unit(arm_dir)
-                        # Same logic: extend horizontally, not in arm direction
-                        forward_component = np.array([muzzle_dir[0], 0])
-                        if np.linalg.norm(forward_component) > 0.1:
-                            forward_component = unit(forward_component)
-                            muzzle_extension = shoulder_width * 0.4
-                            muzzle_pos = wrist_mid + forward_component * muzzle_extension
-                        else:
-                            muzzle_pos = wrist_mid.copy()
+                        muzzle_extension = shoulder_width * 0.4
+                        muzzle_pos = wrist_mid + muzzle_dir * muzzle_extension
         
         # APPROACH 2: Object detection (fallback if arm method didn't work)
         if muzzle_pos is None and muzzle_dir is None and object_model is not None:
@@ -1448,9 +1443,9 @@ with SuppressStdErr():  # suppress any backend warnings during loop
         
         # Draw and record muzzle if detected/estimated
         if muzzle_pos is not None and muzzle_dir is not None:
-            # Smooth muzzle direction over time
+            # Smooth muzzle direction over time (MUZZLE_TEMP_ALPHA = responsive per-frame tracking)
             if prev_muzzle_dir is not None:
-                muzzle_dir = unit(lerp(prev_muzzle_dir, muzzle_dir, 0.3))
+                muzzle_dir = unit(lerp(prev_muzzle_dir, muzzle_dir, MUZZLE_TEMP_ALPHA))
             
             prev_muzzle_dir = muzzle_dir.copy()
             
